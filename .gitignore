@@ -1,0 +1,39 @@
+# Binaries
+/bin/
+/dist/
+/out/
+/tmp/
+/.gopath/
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.log
+*.crt
+*.key
+coverage*.out
+
+# Go modules/vendor
+/vendor/
+
+# IDE/editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment/config
+.env
+.env.*
+secrets/*.yaml
+secrets/*.json
+
+# Generated assets
+config/crd/bases/*.yaml
+deploy/helm/kafscale/charts/
+proto/**/*.pb.go
+proto/**/*.swagger.json
