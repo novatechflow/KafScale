@@ -1148,3 +1148,44 @@ func TestControlServerReportsHealth(t *testing.T) {
 		t.Fatalf("unexpected partition state: %+v", resp.Partitions)
 	}
 }
+
+func TestBrokerEnvConfigOverrides(t *testing.T) {
+	t.Setenv("KAFSCALE_CACHE_BYTES", "10")
+	t.Setenv("KAFSCALE_SEGMENT_BYTES", "2048")
+	t.Setenv("KAFSCALE_FLUSH_INTERVAL_MS", "250")
+
+	store := metadata.NewInMemoryStore(defaultMetadata())
+	handler := newHandler(store, storage.NewMemoryS3Client(), protocol.MetadataBroker{NodeID: 1, Host: "localhost", Port: 19092}, testLogger())
+
+	if handler.logConfig.Buffer.MaxBytes != 2048 {
+		t.Fatalf("expected segment bytes 2048 got %d", handler.logConfig.Buffer.MaxBytes)
+	}
+	if handler.logConfig.Buffer.FlushInterval != 250*time.Millisecond {
+		t.Fatalf("expected flush interval 250ms got %s", handler.logConfig.Buffer.FlushInterval)
+	}
+	if handler.cache == nil {
+		t.Fatalf("expected cache initialized")
+	}
+	handler.cache.SetSegment("topic", 0, 0, []byte("123456"))
+	handler.cache.SetSegment("topic", 0, 1, []byte("abcdef"))
+	if _, ok := handler.cache.GetSegment("topic", 0, 0); ok {
+		t.Fatalf("expected cache eviction for base offset 0")
+	}
+}
+
+func TestBrokerCacheSizeFallback(t *testing.T) {
+	t.Setenv("KAFSCALE_CACHE_BYTES", "")
+	t.Setenv("KAFSCALE_CACHE_SIZE", "8")
+
+	store := metadata.NewInMemoryStore(defaultMetadata())
+	handler := newHandler(store, storage.NewMemoryS3Client(), protocol.MetadataBroker{NodeID: 1, Host: "localhost", Port: 19092}, testLogger())
+
+	if handler.cache == nil {
+		t.Fatalf("expected cache initialized")
+	}
+	handler.cache.SetSegment("topic", 0, 0, []byte("123456"))
+	handler.cache.SetSegment("topic", 0, 1, []byte("abcdef"))
+	if _, ok := handler.cache.GetSegment("topic", 0, 0); ok {
+		t.Fatalf("expected cache eviction for base offset 0")
+	}
+}

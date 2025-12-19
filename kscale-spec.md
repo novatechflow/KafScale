@@ -2827,7 +2827,7 @@ ENTRYPOINT ["./broker"]
 - [x] Honor `KAFSCALE_OPERATOR_ETCD_ENDPOINTS` when cluster spec omits endpoints
 - [x] Auto-provision a 3-node etcd StatefulSet when no endpoints are configured
 - [x] Add etcd snapshot backups to S3 + surface snapshot status
-- [ ] Fix env var mismatches (`KAFSCALE_CACHE_SIZE` vs `KAFSCALE_CACHE_BYTES`, segment/flush vars)
+- [x] Fix env var mismatches (`KAFSCALE_CACHE_SIZE` vs `KAFSCALE_CACHE_BYTES`, segment/flush vars)
 - [ ] Implement Milestone 6.5 Ops APIs (DescribeGroups/ListGroups/OffsetForLeaderEpoch/DescribeConfigs/AlterConfigs/CreatePartitions)
 - [ ] Expand Prometheus metrics to match observability spec
 - [x] E2E: broker port sanity (assert 9092/9093 reachability via Service/port-forward)

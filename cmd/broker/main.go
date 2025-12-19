@@ -689,12 +689,20 @@ func (h *handler) getPartitionLog(ctx context.Context, topic string, partition i
 
 func newHandler(store metadata.Store, s3Client storage.S3Client, brokerInfo protocol.MetadataBroker, logger *slog.Logger) *handler {
 	readAhead := parseEnvInt("KAFSCALE_READAHEAD_SEGMENTS", 2)
-	cacheSize := parseEnvInt("KAFSCALE_CACHE_BYTES", 32<<20)
+	cacheSize := parseEnvInt("KAFSCALE_CACHE_BYTES", 0)
+	if cacheSize <= 0 {
+		cacheSize = parseEnvInt("KAFSCALE_CACHE_SIZE", 0)
+	}
+	if cacheSize <= 0 {
+		cacheSize = 32 << 20
+	}
 	autoCreate := parseEnvBool("KAFSCALE_AUTO_CREATE_TOPICS", true)
 	autoPartitions := int32(parseEnvInt("KAFSCALE_AUTO_CREATE_PARTITIONS", 1))
 	traceKafka := parseEnvBool("KAFSCALE_TRACE_KAFKA", false)
 	throughputWindow := time.Duration(parseEnvInt("KAFSCALE_THROUGHPUT_WINDOW_SEC", 60)) * time.Second
 	s3Namespace := envOrDefault("KAFSCALE_S3_NAMESPACE", "default")
+	segmentBytes := parseEnvInt("KAFSCALE_SEGMENT_BYTES", 4<<20)
+	flushInterval := time.Duration(parseEnvInt("KAFSCALE_FLUSH_INTERVAL_MS", 500)) * time.Millisecond
 	if autoPartitions < 1 {
 		autoPartitions = 1
 	}
@@ -713,8 +721,8 @@ func newHandler(store metadata.Store, s3Client storage.S3Client, brokerInfo prot
 		logs:        make(map[string]map[int32]*storage.PartitionLog),
 		logConfig: storage.PartitionLogConfig{
 			Buffer: storage.WriteBufferConfig{
-				MaxBytes:      4 << 20,
-				FlushInterval: 500 * time.Millisecond,
+				MaxBytes:      segmentBytes,
+				FlushInterval: flushInterval,
 			},
 			Segment: storage.SegmentWriterConfig{
 				IndexIntervalMessages: 100,

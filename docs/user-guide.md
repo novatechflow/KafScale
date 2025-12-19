@@ -45,7 +45,7 @@ Kafscale is a Kafka-compatible, S3-backed message transport system. It keeps bro
    The operator validates bucket access (list + put) during reconciliation. Check operator logs if the CRD status reports `S3ValidationFailed`.
 
 6. **Broker overrides (optional)**  
-   Brokers can read overrides from environment variables if you need different values per pod: `KAFSCALE_S3_BUCKET`, `KAFSCALE_S3_REGION`, `KAFSCALE_S3_ENDPOINT`, `KAFSCALE_S3_PATH_STYLE`, `KAFSCALE_S3_KMS_ARN`, `KAFSCALE_CACHE_BYTES`, and `KAFSCALE_READAHEAD_SEGMENTS`.
+   Brokers can read overrides from environment variables if you need different values per pod: `KAFSCALE_S3_BUCKET`, `KAFSCALE_S3_REGION`, `KAFSCALE_S3_ENDPOINT`, `KAFSCALE_S3_PATH_STYLE`, `KAFSCALE_S3_KMS_ARN`, `KAFSCALE_CACHE_BYTES`, `KAFSCALE_READAHEAD_SEGMENTS`, `KAFSCALE_SEGMENT_BYTES`, and `KAFSCALE_FLUSH_INTERVAL_MS`.
 
 ## Metadata Store (etcd)
 

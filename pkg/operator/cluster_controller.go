@@ -142,7 +142,7 @@ func (r *ClusterReconciler) brokerContainer(cluster *kafscalev1alpha1.KafscaleCl
 	}
 	if cluster.Spec.Config.CacheSize != "" {
 		env = append(env, corev1.EnvVar{
-			Name:  "KAFSCALE_CACHE_SIZE",
+			Name:  "KAFSCALE_CACHE_BYTES",
 			Value: cluster.Spec.Config.CacheSize,
 		})
 	}
