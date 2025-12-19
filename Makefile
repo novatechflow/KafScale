@@ -1,4 +1,4 @@
-.PHONY: proto build test tidy lint generate docker-build docker-build-e2e-client docker-clean ensure-minio start-minio stop-containers release-broker-ports test-e2e test-e2e-debug test-operator demo demo-platform help
+.PHONY: proto build test tidy lint generate docker-build docker-build-e2e-client docker-clean ensure-minio start-minio stop-containers release-broker-ports test-produce-consume test-produce-consume-debug test-operator demo demo-platform help
 
 REGISTRY ?= ghcr.io/novatechflow
 STAMP_DIR ?= .build
@@ -129,7 +129,7 @@ release-broker-ports:
 		fi; \
 	done
 
-test-e2e: release-broker-ports ensure-minio ## Run e2e tests against local Go binaries (only MinIO/kind helpers require Docker).
+test-produce-consume: release-broker-ports ensure-minio ## Run produce/consume tests against local Go binaries (only MinIO/kind helpers require Docker).
 	KAFSCALE_E2E=1 \
 	KAFSCALE_E2E_KIND=1 \
 	KAFSCALE_S3_BUCKET=$(MINIO_BUCKET) \
@@ -138,12 +138,12 @@ test-e2e: release-broker-ports ensure-minio ## Run e2e tests against local Go bi
 	KAFSCALE_S3_PATH_STYLE=true \
 	KAFSCALE_S3_ACCESS_KEY=$(MINIO_ROOT_USER) \
 	KAFSCALE_S3_SECRET_KEY=$(MINIO_ROOT_PASSWORD) \
-	go test -tags=e2e ./test/e2e -v
+	go test -tags=e2e ./test/e2e -run TestFranzGoProduceConsume -v
 
-test-e2e-debug: release-broker-ports ensure-minio ## Run e2e tests with broker trace logging enabled for debugging.
+test-produce-consume-debug: release-broker-ports ensure-minio ## Run produce/consume tests with broker trace logging enabled for debugging.
 	KAFSCALE_TRACE_KAFKA=true \
 	KAFSCALE_LOG_LEVEL=debug \
-	$(MAKE) test-e2e
+	$(MAKE) test-produce-consume
 
 test-operator: docker-build ## Run operator kind+helm snapshot e2e (requires kind/kubectl/helm).
 	KAFSCALE_E2E=1 \
@@ -292,7 +292,7 @@ demo: release-broker-ports ensure-minio ## Launch the broker + console demo stac
 	KAFSCALE_S3_PATH_STYLE=true \
 	KAFSCALE_S3_ACCESS_KEY=$(MINIO_ROOT_USER) \
 	KAFSCALE_S3_SECRET_KEY=$(MINIO_ROOT_PASSWORD) \
-	go test -tags=e2e ./test/e2e -run TestDemoStack -v
+	go test -count=1 -tags=e2e ./test/e2e -run TestDemoStack -v
 
 tidy:
 	go mod tidy

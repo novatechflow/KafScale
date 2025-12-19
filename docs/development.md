@@ -38,8 +38,8 @@ The generated Go code goes into `pkg/gen/{metadata,control}`. Do not edit genera
 make build        # compile all Go binaries
 make test         # run go test ./...
 make docker-build # build broker/operator/console images (run locally whenever their code changes; CI builds on release tags)
-make test-e2e         # run the minio/franz + operator e2e suites (images from docker-build are reused)
-make test-e2e-debug   # same as above but with broker trace logging enabled
+make test-produce-consume         # run the MinIO/franz produce+consume suite only (images from docker-build are reused)
+make test-produce-consume-debug   # same as above but with broker trace logging enabled
 KAFSCALE_E2E=1 go test -tags=e2e ./test/e2e -run TestOperatorManagedEtcdResources -v # operator envtest (no kind)
 KAFSCALE_E2E=1 KAFSCALE_E2E_KIND=1 go test -tags=e2e ./test/e2e -run TestOperatorEtcdSnapshotKindE2E -v # kind + helm integration
 make test-operator # same as above, wrapped in Makefile (set KAFSCALE_KIND_RECREATE=1 for clean clusters)
@@ -49,7 +49,7 @@ make stop-containers # stop leftover kafscale-minio/kind containers from previou
 make help         # list available Makefile targets
 ```
 
-The Makefile defines these as `.PHONY`: `proto`, `build`, `test`, `tidy`, `lint`, `generate`, `docker-build`, `docker-build-broker`, `docker-build-operator`, `docker-build-console`, `docker-build-e2e-client`, `docker-clean`, `ensure-minio`, `start-minio`, `stop-containers`, `release-broker-ports`, `test-e2e`, `test-e2e-debug`, `test-operator`, `demo`, `demo-platform`, `help`.
+The Makefile defines these as `.PHONY`: `proto`, `build`, `test`, `tidy`, `lint`, `generate`, `docker-build`, `docker-build-broker`, `docker-build-operator`, `docker-build-console`, `docker-build-e2e-client`, `docker-clean`, `ensure-minio`, `start-minio`, `stop-containers`, `release-broker-ports`, `test-produce-consume`, `test-produce-consume-debug`, `test-operator`, `demo`, `demo-platform`, `help`.
 
 ### Development/Test Environment Variables
 
@@ -120,7 +120,7 @@ make lint         # run golangci-lint (requires installation)
 
 ### Local MinIO / S3 setup
 
-`make test-e2e` assumes there is an S3 endpoint in front of the broker; we keep a MinIO container (`kafscale-minio`) running locally so the e2e and operator suites exercise a production-like S3 stack. When the broker starts without overriding `KAFSCALE_USE_MEMORY_S3=1`, it points at MinIO at `http://127.0.0.1:9000`, bucket `kafscale`, region `us-east-1`, and uses path-style addressing by default. Set `KAFSCALE_S3_BUCKET`, `KAFSCALE_S3_REGION`, `KAFSCALE_S3_ENDPOINT`, `KAFSCALE_S3_PATH_STYLE`, `KAFSCALE_S3_KMS_ARN`, `KAFSCALE_S3_ACCESS_KEY`, `KAFSCALE_S3_SECRET_KEY`, and `KAFSCALE_S3_SESSION_TOKEN` to target a different S3-compatible endpoint, or flip `KAFSCALE_USE_MEMORY_S3=1` to skip MinIO entirely (the broker then uses the in-memory S3 client for faster, more deterministic runs). Keep `make stop-containers` handy to stop the MinIO / kind helper containers before you restart the suite. If you need to inspect every protocol message, run `make test-e2e-debug`; it sets `KAFSCALE_LOG_LEVEL=debug` and `KAFSCALE_TRACE_KAFKA=true` before chaining into the standard target so the extra noise stays opt-in.
+`make test-produce-consume` assumes there is an S3 endpoint in front of the broker; we keep a MinIO container (`kafscale-minio`) running locally so the produce/consume suite exercises a production-like S3 stack. When the broker starts without overriding `KAFSCALE_USE_MEMORY_S3=1`, it points at MinIO at `http://127.0.0.1:9000`, bucket `kafscale`, region `us-east-1`, and uses path-style addressing by default. Set `KAFSCALE_S3_BUCKET`, `KAFSCALE_S3_REGION`, `KAFSCALE_S3_ENDPOINT`, `KAFSCALE_S3_PATH_STYLE`, `KAFSCALE_S3_KMS_ARN`, `KAFSCALE_S3_ACCESS_KEY`, `KAFSCALE_S3_SECRET_KEY`, and `KAFSCALE_S3_SESSION_TOKEN` to target a different S3-compatible endpoint, or flip `KAFSCALE_USE_MEMORY_S3=1` to skip MinIO entirely (the broker then uses the in-memory S3 client for faster, more deterministic runs). Keep `make stop-containers` handy to stop the MinIO / kind helper containers before you restart the suite. If you need to inspect every protocol message, run `make test-produce-consume-debug`; it sets `KAFSCALE_LOG_LEVEL=debug` and `KAFSCALE_TRACE_KAFKA=true` before chaining into the standard target so the extra noise stays opt-in.
 
 Need an interactive run? `make demo` chains into the same helpers, boots embedded etcd plus the broker + console, opens `http://127.0.0.1:48080/ui/`, and keeps everything running until you hit `Ctrl+C`. It’s the quickest way to click around the UI while real messages flow through the broker/MinIO stack. That target already wires `KAFSCALE_CONSOLE_BROKER_METRICS_URL=http://127.0.0.1:39093/metrics` so the console scrapes the broker’s Prometheus endpoint and populates the S3/metrics cards with live data. Any other process starting `cmd/console` can set the same env var (e.g., `go run ./cmd/console`), and the UI will render the broker-reported S3 state/latency instead of the mock placeholders.
 
@@ -132,7 +132,7 @@ The broker exports live throughput gauges (`kafscale_produce_rps` / `kafscale_fe
 
 ### Broker logging levels
 
-The broker reads `KAFSCALE_LOG_LEVEL` at start-up. If the variable is unset we operate in warning-and-above mode, which keeps regular e2e/test runs quiet. Set `KAFSCALE_LOG_LEVEL=info` or `debug` (optionally together with `KAFSCALE_TRACE_KAFKA=true`) when you need additional visibility; the `test-e2e-debug` target wires those env vars up for you.
+The broker reads `KAFSCALE_LOG_LEVEL` at start-up. If the variable is unset we operate in warning-and-above mode, which keeps regular e2e/test runs quiet. Set `KAFSCALE_LOG_LEVEL=info` or `debug` (optionally together with `KAFSCALE_TRACE_KAFKA=true`) when you need additional visibility; the `test-produce-consume-debug` target wires those env vars up for you.
 
 ## Coding Standards
 

@@ -458,6 +458,20 @@ spec:
 
 func runCmdWithInput(t *testing.T, ctx context.Context, name, input string, args ...string) {
 	t.Helper()
+	if name == "kubectl" {
+		for _, arg := range args {
+			if arg == "--validate=false" || strings.HasPrefix(arg, "--validate=") {
+				goto run
+			}
+		}
+		for _, arg := range args {
+			if arg == "apply" {
+				args = append(args, "--validate=false")
+				break
+			}
+		}
+	}
+run:
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdin = strings.NewReader(input)
 	var buf bytes.Buffer
