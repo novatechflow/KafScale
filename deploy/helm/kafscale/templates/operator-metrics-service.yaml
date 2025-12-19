@@ -1,0 +1,21 @@
+{{- if .Values.operator.metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kafscale.componentName" (dict "root" . "component" "operator") }}-metrics
+  labels:
+{{ include "kafscale.labels" . | indent 4 }}
+    app.kubernetes.io/component: operator
+{{- with .Values.operator.metrics.service.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: {{ .Values.operator.metrics.port }}
+      targetPort: metrics
+  selector:
+{{ include "kafscale.componentSelectorLabels" (dict "root" . "component" "operator") | indent 4 }}
+{{- end }}

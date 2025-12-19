@@ -21,6 +21,19 @@ operator:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  metrics:
+    enabled: true
+    port: 8080
+    service:
+      annotations: {}
+    serviceMonitor:
+      enabled: false
+      interval: 30s
+      scrapeTimeout: 10s
+      labels: {}
+    prometheusRule:
+      enabled: false
+      labels: {}
 
 console:
   replicaCount: 1

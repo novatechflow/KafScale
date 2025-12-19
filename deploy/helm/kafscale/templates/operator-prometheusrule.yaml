@@ -1,0 +1,39 @@
+{{- if and .Values.operator.metrics.enabled .Values.operator.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "kafscale.componentName" (dict "root" . "component" "operator") }}
+  labels:
+{{ include "kafscale.labels" . | indent 4 }}
+{{- with .Values.operator.metrics.prometheusRule.labels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  groups:
+    - name: kafscale-operator.rules
+      rules:
+        - alert: KafscaleSnapshotAccessFailed
+          expr: kafscale_operator_etcd_snapshot_access_ok == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Kafscale snapshot bucket access failing
+            description: Operator cannot write etcd snapshots for cluster {{`{{ $labels.cluster }}`}}.
+        - alert: KafscaleSnapshotStale
+          expr: kafscale_operator_etcd_snapshot_stale == 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kafscale snapshot is stale
+            description: Last successful etcd snapshot is older than the threshold for cluster {{`{{ $labels.cluster }}`}}.
+        - alert: KafscaleSnapshotNeverSucceeded
+          expr: kafscale_operator_etcd_snapshot_success == 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kafscale snapshot has never succeeded
+            description: No successful etcd snapshots recorded yet for cluster {{`{{ $labels.cluster }}`}}.
+{{- end }}
