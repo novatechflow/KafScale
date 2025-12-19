@@ -121,6 +121,7 @@ Recommended operator alerting (when using Prometheus Operator):
 - `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_PROTECT_BUCKET` – Enable versioning + public access block (`1` to enable).
 - `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_SKIP_PREFLIGHT` – Skip the S3 write preflight (`1` to enable).
 - `KAFSCALE_OPERATOR_LEADER_KEY` – Reserved (leader election ID is currently fixed in the operator binary).
+- `KAFSCALE_S3_NAMESPACE` – Prefix used for broker S3 object keys (defaults to the cluster namespace).
 
 ### Broker
 

@@ -328,13 +328,14 @@ func printS3Layout(t *testing.T, bucket string, topics []string) {
 		t.Log("skipping S3 verification: aws CLI not found in PATH")
 		return
 	}
+	namespace := envOrDefault("KAFSCALE_S3_NAMESPACE", "default")
 	endpoint := envOrDefault("KAFSCALE_S3_ENDPOINT", "http://127.0.0.1:9000")
 	accessKey := envOrDefault("KAFSCALE_S3_ACCESS_KEY", "minioadmin")
 	secretKey := envOrDefault("KAFSCALE_S3_SECRET_KEY", "minioadmin")
 	t.Logf("verifying S3 objects in bucket %s", bucket)
 	time.Sleep(2 * time.Second)
 	for _, topic := range topics {
-		prefix := fmt.Sprintf("%s/", topic)
+		prefix := fmt.Sprintf("%s/%s/", namespace, topic)
 		var out bytes.Buffer
 		var lastErr error
 		for attempt := 1; attempt <= 10; attempt++ {

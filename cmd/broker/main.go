@@ -49,6 +49,7 @@ type handler struct {
 	logConfig            storage.PartitionLogConfig
 	coordinator          *broker.GroupCoordinator
 	s3Health             *broker.S3HealthMonitor
+	s3Namespace          string
 	brokerInfo           protocol.MetadataBroker
 	logger               *slog.Logger
 	autoCreateTopics     bool
@@ -665,7 +666,7 @@ func (h *handler) getPartitionLog(ctx context.Context, topic string, partition i
 			}
 			return nil, err
 		}
-		plog := storage.NewPartitionLog(topic, partition, nextOffset, h.s3, h.cache, h.logConfig, func(cbCtx context.Context, artifact *storage.SegmentArtifact) {
+		plog := storage.NewPartitionLog(h.s3Namespace, topic, partition, nextOffset, h.s3, h.cache, h.logConfig, func(cbCtx context.Context, artifact *storage.SegmentArtifact) {
 			if err := h.store.UpdateOffsets(cbCtx, topic, partition, artifact.LastOffset); err != nil {
 				h.logger.Error("update offsets failed", "error", err, "topic", topic, "partition", partition)
 			}
@@ -693,6 +694,7 @@ func newHandler(store metadata.Store, s3Client storage.S3Client, brokerInfo prot
 	autoPartitions := int32(parseEnvInt("KAFSCALE_AUTO_CREATE_PARTITIONS", 1))
 	traceKafka := parseEnvBool("KAFSCALE_TRACE_KAFKA", false)
 	throughputWindow := time.Duration(parseEnvInt("KAFSCALE_THROUGHPUT_WINDOW_SEC", 60)) * time.Second
+	s3Namespace := envOrDefault("KAFSCALE_S3_NAMESPACE", "default")
 	if autoPartitions < 1 {
 		autoPartitions = 1
 	}
@@ -722,6 +724,7 @@ func newHandler(store metadata.Store, s3Client storage.S3Client, brokerInfo prot
 		},
 		coordinator:          broker.NewGroupCoordinator(store, brokerInfo, nil),
 		s3Health:             health,
+		s3Namespace:          s3Namespace,
 		brokerInfo:           brokerInfo,
 		logger:               logger.With("component", "handler"),
 		autoCreateTopics:     autoCreate,

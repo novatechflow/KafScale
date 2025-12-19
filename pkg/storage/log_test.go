@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ func TestPartitionLogAppendFlush(t *testing.T) {
 	s3 := NewMemoryS3Client()
 	c := cache.NewSegmentCache(1024)
 	var flushCount int
-	log := NewPartitionLog("orders", 0, 0, s3, c, PartitionLogConfig{
+	log := NewPartitionLog("default", "orders", 0, 0, s3, c, PartitionLogConfig{
 		Buffer: WriteBufferConfig{
 			MaxBytes:      1,
 			FlushInterval: time.Millisecond,
@@ -50,7 +51,7 @@ func TestPartitionLogAppendFlush(t *testing.T) {
 func TestPartitionLogRead(t *testing.T) {
 	s3 := NewMemoryS3Client()
 	c := cache.NewSegmentCache(1024)
-	log := NewPartitionLog("orders", 0, 0, s3, c, PartitionLogConfig{
+	log := NewPartitionLog("default", "orders", 0, 0, s3, c, PartitionLogConfig{
 		Buffer: WriteBufferConfig{
 			MaxBytes:      1,
 			FlushInterval: time.Millisecond,
@@ -80,11 +81,55 @@ func TestPartitionLogRead(t *testing.T) {
 	}
 }
 
+func TestPartitionLogReadUsesIndexRange(t *testing.T) {
+	s3 := NewMemoryS3Client()
+	log := NewPartitionLog("default", "orders", 0, 0, s3, nil, PartitionLogConfig{
+		Buffer: WriteBufferConfig{
+			MaxBytes:      1,
+			FlushInterval: time.Millisecond,
+		},
+		Segment: SegmentWriterConfig{
+			IndexIntervalMessages: 1,
+		},
+	}, nil, nil)
+
+	batch1 := makeBatchBytes(0, 0, 1, 0x11)
+	batch2 := makeBatchBytes(1, 0, 1, 0x22)
+	record1, err := NewRecordBatchFromBytes(batch1)
+	if err != nil {
+		t.Fatalf("NewRecordBatchFromBytes batch1: %v", err)
+	}
+	record2, err := NewRecordBatchFromBytes(batch2)
+	if err != nil {
+		t.Fatalf("NewRecordBatchFromBytes batch2: %v", err)
+	}
+	if _, err := log.AppendBatch(context.Background(), record1); err != nil {
+		t.Fatalf("AppendBatch batch1: %v", err)
+	}
+	if _, err := log.AppendBatch(context.Background(), record2); err != nil {
+		t.Fatalf("AppendBatch batch2: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := log.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	data, err := log.Read(context.Background(), 1, int32(len(batch2)))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(data) <= 12 {
+		t.Fatalf("expected data length > 12, got %d", len(data))
+	}
+	if data[12] != 0x22 {
+		t.Fatalf("expected range read from second batch, got marker %x", data[12])
+	}
+}
+
 func TestPartitionLogReportsS3Uploads(t *testing.T) {
 	s3 := NewMemoryS3Client()
 	c := cache.NewSegmentCache(1024)
 	var uploads int
-	log := NewPartitionLog("orders", 0, 0, s3, c, PartitionLogConfig{
+	log := NewPartitionLog("default", "orders", 0, 0, s3, c, PartitionLogConfig{
 		Buffer: WriteBufferConfig{
 			MaxBytes:      1,
 			FlushInterval: time.Millisecond,
@@ -113,7 +158,7 @@ func TestPartitionLogReportsS3Uploads(t *testing.T) {
 func TestPartitionLogRestoreFromS3(t *testing.T) {
 	s3 := NewMemoryS3Client()
 	c := cache.NewSegmentCache(1024)
-	log := NewPartitionLog("orders", 0, 0, s3, c, PartitionLogConfig{
+	log := NewPartitionLog("default", "orders", 0, 0, s3, c, PartitionLogConfig{
 		Buffer: WriteBufferConfig{
 			MaxBytes:      1,
 			FlushInterval: time.Millisecond,
@@ -133,7 +178,7 @@ func TestPartitionLogRestoreFromS3(t *testing.T) {
 		t.Fatalf("Flush: %v", err)
 	}
 
-	recovered := NewPartitionLog("orders", 0, 0, s3, c, PartitionLogConfig{
+	recovered := NewPartitionLog("default", "orders", 0, 0, s3, c, PartitionLogConfig{
 		Buffer: WriteBufferConfig{
 			MaxBytes:      1,
 			FlushInterval: time.Millisecond,
@@ -163,4 +208,14 @@ func TestPartitionLogRestoreFromS3(t *testing.T) {
 	if res.BaseOffset != 1 {
 		t.Fatalf("expected base offset 1 after restore, got %d", res.BaseOffset)
 	}
+}
+
+func makeBatchBytes(baseOffset int64, lastOffsetDelta int32, messageCount int32, marker byte) []byte {
+	const size = 70
+	data := make([]byte, size)
+	binary.BigEndian.PutUint64(data[0:8], uint64(baseOffset))
+	binary.BigEndian.PutUint32(data[23:27], uint32(lastOffsetDelta))
+	binary.BigEndian.PutUint32(data[57:61], uint32(messageCount))
+	data[12] = marker
+	return data
 }

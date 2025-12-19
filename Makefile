@@ -134,6 +134,7 @@ test-produce-consume: release-broker-ports ensure-minio ## Run produce/consume t
 	KAFSCALE_E2E_KIND=1 \
 	KAFSCALE_S3_BUCKET=$(MINIO_BUCKET) \
 	KAFSCALE_S3_REGION=$(MINIO_REGION) \
+	KAFSCALE_S3_NAMESPACE=default \
 	KAFSCALE_S3_ENDPOINT=http://127.0.0.1:$(MINIO_PORT) \
 	KAFSCALE_S3_PATH_STYLE=true \
 	KAFSCALE_S3_ACCESS_KEY=$(MINIO_ROOT_USER) \
@@ -288,6 +289,7 @@ demo: release-broker-ports ensure-minio ## Launch the broker + console demo stac
 	KAFSCALE_CONSOLE_BROKER_METRICS_URL=http://127.0.0.1:39093/metrics \
 	KAFSCALE_S3_BUCKET=$(MINIO_BUCKET) \
 	KAFSCALE_S3_REGION=$(MINIO_REGION) \
+	KAFSCALE_S3_NAMESPACE=default \
 	KAFSCALE_S3_ENDPOINT=http://127.0.0.1:$(MINIO_PORT) \
 	KAFSCALE_S3_PATH_STYLE=true \
 	KAFSCALE_S3_ACCESS_KEY=$(MINIO_ROOT_USER) \

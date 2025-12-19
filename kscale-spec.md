@@ -2821,7 +2821,7 @@ ENTRYPOINT ["./broker"]
 - [x] Decide etcd schema direction (snapshot-only for now; defer per-key registry/assignment keys)
 - [x] Rebuild partition logs on broker restart by listing S3 segments + loading indexes
 - [x] Align fetch request support with v13 (spec)
-- [ ] Align S3 key layout with namespace support and use index-based range reads
+- [x] Align S3 key layout with namespace support and use index-based range reads
 - [ ] Persist consumer group metadata (not just offsets) in etcd or document in-memory limitations
 - [x] Define etcd HA requirements (dedicated cluster, SSD storage, odd quorum) and reflect in ops docs
 - [x] Honor `KAFSCALE_OPERATOR_ETCD_ENDPOINTS` when cluster spec omits endpoints

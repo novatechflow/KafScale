@@ -24,6 +24,7 @@ type PartitionLogConfig struct {
 
 // PartitionLog coordinates buffering, segment serialization, S3 uploads, and caching.
 type PartitionLog struct {
+	namespace    string
 	topic        string
 	partition    int32
 	s3           S3Client
@@ -42,14 +43,19 @@ type PartitionLog struct {
 type segmentRange struct {
 	baseOffset int64
 	lastOffset int64
+	size       int64
 }
 
 // ErrOffsetOutOfRange is returned when the requested offset is outside persisted data.
 var ErrOffsetOutOfRange = errors.New("offset out of range")
 
 // NewPartitionLog constructs a log for a topic partition.
-func NewPartitionLog(topic string, partition int32, startOffset int64, s3Client S3Client, cache *cache.SegmentCache, cfg PartitionLogConfig, onFlush func(context.Context, *SegmentArtifact), onS3Op func(string, time.Duration, error)) *PartitionLog {
+func NewPartitionLog(namespace string, topic string, partition int32, startOffset int64, s3Client S3Client, cache *cache.SegmentCache, cfg PartitionLogConfig, onFlush func(context.Context, *SegmentArtifact), onS3Op func(string, time.Duration, error)) *PartitionLog {
+	if namespace == "" {
+		namespace = "default"
+	}
 	return &PartitionLog{
+		namespace:    namespace,
 		topic:        topic,
 		partition:    partition,
 		s3:           s3Client,
@@ -66,7 +72,7 @@ func NewPartitionLog(topic string, partition int32, startOffset int64, s3Client 
 
 // RestoreFromS3 rebuilds segment ranges from objects already stored in S3.
 func (l *PartitionLog) RestoreFromS3(ctx context.Context) (int64, error) {
-	prefix := path.Join(l.topic, fmt.Sprintf("%d", l.partition)) + "/"
+	prefix := l.segmentPrefix()
 	objects, err := l.s3.ListSegments(ctx, prefix)
 	if err != nil {
 		return -1, err
@@ -74,6 +80,7 @@ func (l *PartitionLog) RestoreFromS3(ctx context.Context) (int64, error) {
 	type entry struct {
 		base int64
 		last int64
+		size int64
 	}
 	entries := make([]entry, 0, len(objects))
 	for _, obj := range objects {
@@ -101,7 +108,7 @@ func (l *PartitionLog) RestoreFromS3(ctx context.Context) (int64, error) {
 		if err != nil {
 			return -1, err
 		}
-		entries = append(entries, entry{base: base, last: lastOffset})
+		entries = append(entries, entry{base: base, last: lastOffset, size: obj.Size})
 	}
 	if len(entries) == 0 {
 		return -1, nil
@@ -128,6 +135,7 @@ func (l *PartitionLog) RestoreFromS3(ctx context.Context) (int64, error) {
 		segments = append(segments, segmentRange{
 			baseOffset: entry.base,
 			lastOffset: entry.last,
+			size:       entry.size,
 		})
 		indexByBase[entry.base] = parsedEntries
 	}
@@ -235,12 +243,13 @@ func (l *PartitionLog) flushLocked(ctx context.Context) (*SegmentArtifact, error
 	if uploadErr != nil {
 		return nil, uploadErr
 	}
-	if l.cache != nil {
-		l.cache.SetSegment(l.topic, l.partition, artifact.BaseOffset, artifact.SegmentBytes)
+	if l.cache != nil && l.cfg.CacheEnabled {
+		l.cache.SetSegment(l.cacheTopicKey(), l.partition, artifact.BaseOffset, artifact.SegmentBytes)
 	}
 	l.segments = append(l.segments, segmentRange{
 		baseOffset: artifact.BaseOffset,
 		lastOffset: artifact.LastOffset,
+		size:       int64(len(artifact.SegmentBytes)),
 	})
 	if artifact.RelativeIndex != nil {
 		l.indexEntries[artifact.BaseOffset] = artifact.RelativeIndex
@@ -250,11 +259,19 @@ func (l *PartitionLog) flushLocked(ctx context.Context) (*SegmentArtifact, error
 }
 
 func (l *PartitionLog) segmentKey(baseOffset int64) string {
-	return path.Join(l.topic, fmt.Sprintf("%d", l.partition), fmt.Sprintf("segment-%020d.kfs", baseOffset))
+	return path.Join(l.namespace, l.topic, fmt.Sprintf("%d", l.partition), fmt.Sprintf("segment-%020d.kfs", baseOffset))
 }
 
 func (l *PartitionLog) indexKey(baseOffset int64) string {
-	return path.Join(l.topic, fmt.Sprintf("%d", l.partition), fmt.Sprintf("segment-%020d.index", baseOffset))
+	return path.Join(l.namespace, l.topic, fmt.Sprintf("%d", l.partition), fmt.Sprintf("segment-%020d.index", baseOffset))
+}
+
+func (l *PartitionLog) segmentPrefix() string {
+	return path.Join(l.namespace, l.topic, fmt.Sprintf("%d", l.partition)) + "/"
+}
+
+func (l *PartitionLog) cacheTopicKey() string {
+	return path.Join(l.namespace, l.topic)
 }
 
 func parseSegmentBaseOffset(key string) (int64, bool) {
@@ -284,10 +301,12 @@ func (l *PartitionLog) Read(ctx context.Context, offset int64, maxBytes int32) (
 	l.mu.Lock()
 	var seg segmentRange
 	found := false
+	var entries []*IndexEntry
 	for _, s := range l.segments {
 		if offset >= s.baseOffset && offset <= s.lastOffset {
 			seg = s
 			found = true
+			entries = l.indexEntries[s.baseOffset]
 			break
 		}
 	}
@@ -297,42 +316,56 @@ func (l *PartitionLog) Read(ctx context.Context, offset int64, maxBytes int32) (
 		return nil, ErrOffsetOutOfRange
 	}
 
-	data, ok := l.cache.GetSegment(l.topic, l.partition, seg.baseOffset)
+	var data []byte
+	ok := false
+	if l.cache != nil && l.cfg.CacheEnabled {
+		data, ok = l.cache.GetSegment(l.cacheTopicKey(), l.partition, seg.baseOffset)
+	}
+	rangeReadUsed := false
 	if !ok {
-		start := time.Now()
-		bytes, err := l.s3.DownloadSegment(ctx, l.segmentKey(seg.baseOffset), nil)
-		if l.onS3Op != nil {
-			l.onS3Op("download_segment", time.Since(start), err)
-		}
-		if err != nil {
-			return nil, err
-		}
-		data = bytes
-		if l.cache != nil && l.cfg.CacheEnabled {
-			l.cache.SetSegment(l.topic, l.partition, seg.baseOffset, data)
+		if rangeRead, rng := l.segmentRangeForOffset(seg, entries, offset, maxBytes); rangeRead {
+			start := time.Now()
+			bytes, err := l.s3.DownloadSegment(ctx, l.segmentKey(seg.baseOffset), rng)
+			if l.onS3Op != nil {
+				l.onS3Op("download_segment_range", time.Since(start), err)
+			}
+			if err != nil {
+				return nil, err
+			}
+			data = bytes
+			rangeReadUsed = true
+		} else {
+			start := time.Now()
+			bytes, err := l.s3.DownloadSegment(ctx, l.segmentKey(seg.baseOffset), nil)
+			if l.onS3Op != nil {
+				l.onS3Op("download_segment", time.Since(start), err)
+			}
+			if err != nil {
+				return nil, err
+			}
+			data = bytes
+			if l.cache != nil && l.cfg.CacheEnabled {
+				l.cache.SetSegment(l.cacheTopicKey(), l.partition, seg.baseOffset, data)
+			}
 		}
 	}
 	l.startPrefetch(ctx, l.segmentIndex(seg.baseOffset)+1)
 
-	const headerLen = 32
-	const footerLen = 16
-	start := headerLen
-	if start > len(data) {
-		start = len(data)
+	if ok {
+		body, err := l.sliceCachedSegment(seg, entries, offset, maxBytes, data)
+		if err != nil {
+			return nil, err
+		}
+		return body, nil
 	}
-	end := len(data)
-	if len(data) > footerLen {
-		end = len(data) - footerLen
+	if rangeReadUsed {
+		return data, nil
 	}
-	if end < start {
-		end = len(data)
+	body, err := l.sliceCachedSegment(seg, entries, offset, maxBytes, data)
+	if err != nil {
+		return nil, err
 	}
-	body := data[start:end]
-	result := append([]byte(nil), body...)
-	if maxBytes > 0 && len(result) > int(maxBytes) {
-		result = result[:maxBytes]
-	}
-	return result, nil
+	return body, nil
 }
 
 func (l *PartitionLog) segmentIndex(baseOffset int64) int {
@@ -345,7 +378,7 @@ func (l *PartitionLog) segmentIndex(baseOffset int64) int {
 }
 
 func (l *PartitionLog) startPrefetch(ctx context.Context, nextIndex int) {
-	if l.cfg.ReadAheadSegments <= 0 || nextIndex < 0 {
+	if l.cfg.ReadAheadSegments <= 0 || nextIndex < 0 || l.cache == nil || !l.cfg.CacheEnabled {
 		return
 	}
 	l.prefetchMu.Lock()
@@ -356,19 +389,109 @@ func (l *PartitionLog) startPrefetch(ctx context.Context, nextIndex int) {
 			break
 		}
 		seg := l.segments[idx]
-		if l.cache != nil {
-			if _, ok := l.cache.GetSegment(l.topic, l.partition, seg.baseOffset); ok {
-				continue
-			}
+		if _, ok := l.cache.GetSegment(l.cacheTopicKey(), l.partition, seg.baseOffset); ok {
+			continue
 		}
 		go func(seg segmentRange) {
 			data, err := l.s3.DownloadSegment(ctx, l.segmentKey(seg.baseOffset), nil)
 			if err != nil {
 				return
 			}
-			if l.cache != nil && l.cfg.CacheEnabled {
-				l.cache.SetSegment(l.topic, l.partition, seg.baseOffset, data)
-			}
+			l.cache.SetSegment(l.cacheTopicKey(), l.partition, seg.baseOffset, data)
 		}(seg)
 	}
+}
+
+func (l *PartitionLog) sliceCachedSegment(seg segmentRange, entries []*IndexEntry, offset int64, maxBytes int32, data []byte) ([]byte, error) {
+	if len(entries) == 0 {
+		return sliceFullSegmentData(data, maxBytes), nil
+	}
+	start, end := l.computeSegmentRange(seg, entries, offset, maxBytes)
+	if start < 0 || end < start {
+		return nil, ErrOffsetOutOfRange
+	}
+	if end >= int64(len(data)) {
+		end = int64(len(data)) - 1
+	}
+	return append([]byte(nil), data[start:end+1]...), nil
+}
+
+func sliceFullSegmentData(data []byte, maxBytes int32) []byte {
+	const headerLen = 32
+	start := headerLen
+	if start > len(data) {
+		start = len(data)
+	}
+	end := len(data)
+	if len(data) > segmentFooterLen {
+		end = len(data) - segmentFooterLen
+	}
+	if end < start {
+		end = len(data)
+	}
+	body := append([]byte(nil), data[start:end]...)
+	if maxBytes > 0 && len(body) > int(maxBytes) {
+		body = body[:maxBytes]
+	}
+	return body
+}
+
+func (l *PartitionLog) segmentRangeForOffset(seg segmentRange, entries []*IndexEntry, offset int64, maxBytes int32) (bool, *ByteRange) {
+	if seg.size <= 0 || len(entries) == 0 {
+		return false, nil
+	}
+	start, end := l.computeSegmentRange(seg, entries, offset, maxBytes)
+	if start < 0 || end < start {
+		return false, nil
+	}
+	return true, &ByteRange{Start: start, End: end}
+}
+
+func (l *PartitionLog) computeSegmentRange(seg segmentRange, entries []*IndexEntry, offset int64, maxBytes int32) (int64, int64) {
+	if seg.size <= segmentFooterLen {
+		return -1, -1
+	}
+	entry := findIndexEntry(entries, offset)
+	start := int64(entry.Position)
+	endLimit := seg.size - segmentFooterLen
+	if endLimit <= start {
+		return -1, -1
+	}
+	end := endLimit - 1
+	if maxBytes > 0 {
+		maxEnd := start + int64(maxBytes) - 1
+		if maxEnd < end {
+			end = maxEnd
+		}
+	}
+	return start, end
+}
+
+func findIndexEntry(entries []*IndexEntry, offset int64) *IndexEntry {
+	if len(entries) == 0 {
+		return &IndexEntry{Offset: 0, Position: 0}
+	}
+	lo := 0
+	hi := len(entries) - 1
+	if offset <= entries[0].Offset {
+		return entries[0]
+	}
+	if offset >= entries[hi].Offset {
+		return entries[hi]
+	}
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		if entries[mid].Offset == offset {
+			return entries[mid]
+		}
+		if entries[mid].Offset < offset {
+			if mid+1 <= hi && entries[mid+1].Offset > offset {
+				return entries[mid]
+			}
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return entries[0]
 }
