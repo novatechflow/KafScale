@@ -21,7 +21,7 @@ require (
 	sigs.k8s.io/controller-runtime v0.17.0
 )
 
-replace sigs.k8s.io/controller-runtime => ./third_party/sigs.k8s.io/controller-runtime
+replace sigs.k8s.io/controller-runtime => github.com/novatechflow/controller-runtime v0.17.0-kafscale.0
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 // indirect
