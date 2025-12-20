@@ -1,0 +1,29 @@
+# Ignore everything by default for gh-pages
+*
+
+# Allow directories so HTML files can be included
+!*/
+
+# Keep site sources and assets
+!*.html
+!*.md
+!*.yml
+!*.yaml
+!*.css
+!*.js
+!*.json
+!*.png
+!*.jpg
+!*.jpeg
+!*.svg
+!*.webp
+!*.ico
+!*.txt
+!CNAME
+
+# Keep this file
+!.gitignore
+
+# Ignore build/cache directories even if extensions match
+/.gocache/
+/.build/
