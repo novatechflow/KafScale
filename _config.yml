@@ -13,3 +13,5 @@ kramdown:
 collections:
   pages:
     output: true
+plugins:
+  - jekyll-sitemap

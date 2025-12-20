@@ -117,6 +117,31 @@ a:visited {
   font-weight: 500;
 }
 
+.nav-github {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--bg-alt);
+}
+
+.nav-github svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  transform: none;
+}
+
+[data-theme="dark"] .nav-github {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #f8fafc;
+}
+
 .nav-links a[aria-current="page"] {
   color: var(--accent);
 }
