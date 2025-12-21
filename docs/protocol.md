@@ -70,9 +70,11 @@ Kafscale implements a focused subset of the Kafka protocol. Versions below refle
 | Version | Auth Mechanism | Use Case |
 |---------|---------------|----------|
 | v1.0 | None | Internal/dev clusters |
-| v1.1 | SASL/PLAIN | Username/password |
-| v1.1 | SASL/SCRAM-SHA-256/512 | Username/password + challenge-response |
-| v2.0 | SASL/OAUTHBEARER | Enterprise SSO |
+| v1.5 | Auth groundwork | TLS on by default, auth plumbing, and UI/session hardening |
+| v2.0 | SASL/PLAIN | Username/password |
+| v2.0 | SASL/SCRAM-SHA-256/512 | Username/password + challenge-response |
+| v2.0 | ACL authorization | Per-topic/group access control |
 | v2.0 | mTLS | Certificate-based auth |
+| v2.0 | SASL/OAUTHBEARER | Enterprise SSO |
 
 Until auth lands, Kafscale responds to SASL handshake attempts with `UNSUPPORTED_SASL_MECHANISM` (error code 33).

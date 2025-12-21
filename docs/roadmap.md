@@ -38,6 +38,11 @@ This roadmap tracks completed work and open gaps. It is intentionally high level
 
 ## Open
 
+### Release Planning
+
+- v1.5: authentication groundwork and security hardening
+- v2.0: SASL support and ACL authorization
+
 ### Testing and Hardening
 
 - Performance benchmarks
