@@ -2,6 +2,7 @@
 layout: doc
 title: Quickstart
 description: Install the KafScale operator, create your first topic, and stream messages in minutes.
+permalink: /quickstart/
 ---
 
 # Quickstart
@@ -16,16 +17,17 @@ This guide covers a minimal installation on a cloud Kubernetes cluster using the
 - An S3-compatible bucket and credentials
 - Optional: external etcd endpoints (or let the operator manage etcd)
 
-<div class="step-grid">
-  <div class="step-card" markdown="1">
-### 1) Create a namespace
+---
+
+## 1. Create a namespace
 
 ```bash
 kubectl create namespace kafscale
 ```
-  </div>
-  <div class="step-card" markdown="1">
-### 2) Create an S3 credentials secret
+
+---
+
+## 2. Create an S3 credentials secret
 
 ```bash
 kubectl -n kafscale create secret generic kafscale-s3 \
@@ -37,39 +39,45 @@ Optional session token:
 
 ```bash
 kubectl -n kafscale patch secret kafscale-s3 -p \
-  '{"data":{"AWS_SESSION_TOKEN":"'"'"'$(printf %s "YOUR_SESSION_TOKEN" | base64)'"'"'"}}'
+  '{"data":{"AWS_SESSION_TOKEN":"'$(printf %s "TOKEN" | base64)'"}}'
 ```
-  </div>
-  <div class="step-card" markdown="1">
-### 3) Install the operator (managed etcd)
+
+---
+
+## 3. Install the operator
+
+With managed etcd (simplest):
 
 ```bash
 helm upgrade --install kafscale deploy/helm/kafscale \
-  --namespace kafscale --create-namespace \
+  --namespace kafscale \
+  --create-namespace \
   --set operator.etcdEndpoints={} \
   --set operator.image.tag=latest \
   --set console.image.tag=latest
 ```
 
-External etcd option:
+With external etcd:
 
 ```bash
 helm upgrade --install kafscale deploy/helm/kafscale \
-  --namespace kafscale --create-namespace \
+  --namespace kafscale \
+  --create-namespace \
   --set operator.etcdEndpoints[0]=http://etcd.kafscale.svc:2379 \
   --set operator.image.tag=latest \
   --set console.image.tag=latest
 ```
-  </div>
-  <div class="step-card" markdown="1">
-### 4) Create a KafScaleCluster
 
-```bash
-cat <<'EOF' | kubectl apply -n kafscale -f -
-apiVersion: kafscale.novatechflow.io/v1alpha1
+---
+
+## 4. Create a KafscaleCluster
+
+```yaml
+apiVersion: kafscale.io/v1alpha1
 kind: KafscaleCluster
 metadata:
   name: demo
+  namespace: kafscale
 spec:
   brokers:
     replicas: 3
@@ -79,75 +87,140 @@ spec:
     credentialsSecretRef: kafscale-s3
   etcd:
     endpoints: []
-EOF
 ```
-
-If you are using external etcd, set `spec.etcd.endpoints` instead:
 
 ```bash
-cat <<'EOF' | kubectl apply -n kafscale -f -
-apiVersion: kafscale.novatechflow.io/v1alpha1
-kind: KafscaleCluster
-metadata:
-  name: demo
-spec:
-  brokers:
-    replicas: 3
-  s3:
-    bucket: kafscale-demo
-    region: us-east-1
-    credentialsSecretRef: kafscale-s3
-  etcd:
-    endpoints:
-      - http://etcd.kafscale.svc:2379
-EOF
+kubectl apply -f cluster.yaml
 ```
 
-For S3-compatible endpoints (MinIO, etc), add:
+For external etcd, set `spec.etcd.endpoints` to your etcd service.
+
+For S3-compatible storage (MinIO), add `s3.endpoint`.
+
+---
+
+## 5. Create a topic
 
 ```yaml
-s3:
-  endpoint: http://minio.kafscale.svc:9000
-```
-  </div>
-  <div class="step-card" markdown="1">
-### 5) Create a topic
-
-```bash
-cat <<'EOF' | kubectl apply -n kafscale -f -
-apiVersion: kafscale.novatechflow.io/v1alpha1
+apiVersion: kafscale.io/v1alpha1
 kind: KafscaleTopic
 metadata:
   name: orders
+  namespace: kafscale
 spec:
   clusterRef: demo
   partitions: 3
-EOF
 ```
-  </div>
-  <div class="step-card" markdown="1">
-### 6) Produce and consume
+
+```bash
+kubectl apply -f topic.yaml
+```
+
+---
+
+## 6. Produce and consume
+
+Port-forward the broker service:
 
 ```bash
 kubectl -n kafscale port-forward svc/demo-broker 9092:9092
 ```
 
-```bash
-kafka-console-producer --bootstrap-server 127.0.0.1:9092 --topic orders
-kafka-console-consumer --bootstrap-server 127.0.0.1:9092 --topic orders --from-beginning
-```
-  </div>
-  <div class="step-card" markdown="1">
-### 7) Verify messages in S3
+Produce messages:
 
 ```bash
-aws s3 ls s3://kafscale-demo/
+kafka-console-producer \
+  --bootstrap-server 127.0.0.1:9092 \
+  --topic orders
 ```
-  </div>
-</div>
+
+Consume messages:
+
+```bash
+kafka-console-consumer \
+  --bootstrap-server 127.0.0.1:9092 \
+  --topic orders \
+  --from-beginning
+```
+
+---
+
+## 7. Verify messages in S3
+
+```bash
+aws s3 ls s3://kafscale-demo/default/orders/
+```
+
+You should see segment files:
+
+```
+segment-00000000000000000000.kfs
+segment-00000000000000000000.index
+```
+
+---
+
+## Using Docker Compose (local development)
+
+For local testing without Kubernetes:
+
+```bash
+git clone https://github.com/novatechflow/kafscale.git
+cd kafscale
+docker-compose up -d
+```
+
+This starts a broker on port 9092, etcd on port 2379, and MinIO on port 9000.
+
+Test with:
+
+```bash
+make test-produce-consume
+```
+
+---
+
+## Using existing Kafka clients
+
+KafScale is compatible with standard Kafka clients. No code changes required.
+
+Java:
+
+```java
+Properties props = new Properties();
+props.put("bootstrap.servers", "127.0.0.1:9092");
+props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+
+KafkaProducer<String, String> producer = new KafkaProducer<>(props);
+producer.send(new ProducerRecord<>("orders", "key", "value"));
+```
+
+Python (kafka-python):
+
+```python
+from kafka import KafkaProducer
+
+producer = KafkaProducer(bootstrap_servers='127.0.0.1:9092')
+producer.send('orders', b'hello world')
+producer.flush()
+```
+
+Go (franz-go):
+
+```go
+client, _ := kgo.NewClient(kgo.SeedBrokers("127.0.0.1:9092"))
+defer client.Close()
+
+record := &kgo.Record{Topic: "orders", Value: []byte("hello world")}
+client.ProduceSync(context.Background(), record)
+```
+
+---
 
 ## Next steps
 
+- [Architecture](/architecture/) for how KafScale works
 - [Operations](/operations/) for production hardening
-- [Configuration](/configuration/) for full env var reference
-- [API](/api/) for protocol support
+- [Configuration](/configuration/) for full environment variable reference
+- [Protocol](/protocol/) for Kafka API compatibility details

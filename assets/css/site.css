@@ -72,6 +72,42 @@ a:visited {
   flex-direction: column;
 }
 
+.site-banner {
+  background: rgba(244, 162, 97, 0.18);
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 6vw;
+  font-size: 0.92rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 1rem;
+}
+
+.site-banner p {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.site-banner a {
+  font-weight: 600;
+}
+
+.banner-close {
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
 .site-nav {
   position: sticky;
   top: 0;
@@ -335,6 +371,10 @@ a:visited {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 1.25rem;
+}
+
+.grid + .hero-actions {
+  margin-top: 2rem;
 }
 
 .card {

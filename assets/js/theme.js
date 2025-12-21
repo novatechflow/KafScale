@@ -5,6 +5,9 @@ const sunLabel = toggle ? toggle.querySelector('.sun') : null;
 const moonLabel = toggle ? toggle.querySelector('.moon') : null;
 const navToggle = document.querySelector('.nav-toggle');
 const navLinks = document.getElementById('nav-links');
+const banner = document.querySelector('.site-banner');
+const bannerClose = document.querySelector('.banner-close');
+const bannerKey = 'kafscale-banner-dismissed';
 
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 const savedTheme = localStorage.getItem(storageKey);
@@ -35,6 +38,19 @@ if (toggle) {
     const current = root.getAttribute('data-theme');
     setTheme(current === 'dark' ? 'light' : 'dark');
   });
+}
+
+if (banner && bannerClose) {
+  const hiddenUntil = Number(localStorage.getItem(bannerKey));
+  if (hiddenUntil && Date.now() < hiddenUntil) {
+    banner.remove();
+  } else {
+    bannerClose.addEventListener('click', () => {
+      const next = Date.now() + 24 * 60 * 60 * 1000;
+      localStorage.setItem(bannerKey, String(next));
+      banner.remove();
+    });
+  }
 }
 
 if (navToggle && navLinks) {

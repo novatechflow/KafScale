@@ -110,7 +110,7 @@ Sparse index for fast offset-to-position lookups. One entry per N messages.
 ### Index header (16 bytes)
 
 <div class="format-card">
-  <div class="format-row"><span>Magic</span><span>4 bytes</span><span><code>0x494458</code> ("IDX")</span></div>
+  <div class="format-row"><span>Magic</span><span>4 bytes</span><span><code>0x4944580A</code> ("IDX\n")</span></div>
   <div class="format-row"><span>Version</span><span>2 bytes</span><span><code>1</code></span></div>
   <div class="format-row"><span>Entry count</span><span>4 bytes</span><span>Number of index entries</span></div>
   <div class="format-row"><span>Interval</span><span>4 bytes</span><span>Messages between entries</span></div>
@@ -146,7 +146,7 @@ To locate offset N: binary search index entries, then scan forward from nearest 
     <rect x="260" y="30" width="200" height="90" rx="10" fill="rgba(52, 211, 153, 0.15)" stroke="#34d399" stroke-width="1.5"/>
     <text x="360" y="55" font-size="12" font-weight="600" fill="var(--diagram-text)" text-anchor="middle">L2: Index Cache</text>
     <text x="360" y="75" font-size="10" fill="var(--diagram-label)" text-anchor="middle">All indexes for assigned partitions</text>
-    <text x="360" y="92" font-size="10" fill="var(--diagram-label)" text-anchor="middle">Refreshed on segment roll · 100-500 MB</text>
+    <text x="360" y="92" font-size="10" fill="var(--diagram-label)" text-anchor="middle">Refreshed on segment roll · 100 MB</text>
     <text x="360" y="108" font-size="9" fill="#34d399" text-anchor="middle">&lt;1ms latency</text>
 
     <!-- S3 -->
@@ -174,8 +174,8 @@ To locate offset N: binary search index entries, then scan forward from nearest 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KAFSCALE_CACHE_SIZE` | `1GB` | L1 hot segment cache size |
-| `KAFSCALE_INDEX_CACHE_SIZE` | `256MB` | L2 index cache size |
+| `KAFSCALE_CACHE_BYTES` | `1073741824` | L1 hot segment cache size (1GB) |
+| `KAFSCALE_INDEX_CACHE_BYTES` | `104857600` | L2 index cache size (100MB) |
 | `KAFSCALE_READAHEAD_SEGMENTS` | `2` | Segments to prefetch |
 
 ## Flush triggers
@@ -309,15 +309,18 @@ KafScale supports batch-level compression using Kafka-compatible codecs.
 | LZ4 | 3 | Faster decompression |
 | ZSTD | 4 | Best ratio, slower |
 
-Set via `KAFSCALE_COMPRESSION_CODEC` or per-topic in CRD:
+Set per-topic in CRD:
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
 kind: KafscaleTopic
 metadata:
   name: logs
+  namespace: kafscale
 spec:
+  clusterRef: demo
   partitions: 6
-  retention: 24h
-  compression: zstd  # Better ratio for logs
+  config:
+    retention.ms: "86400000"
+    compression.type: "zstd"
 ```
