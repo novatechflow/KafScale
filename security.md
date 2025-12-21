@@ -146,11 +146,12 @@ spec:
 
 | Feature | Target | Status |
 |---------|--------|--------|
-| TLS enabled by default | v1.1 | Planned |
-| SASL/PLAIN authentication | v1.2 | Planned |
-| SASL/SCRAM authentication | v1.2 | Planned |
-| ACL layer for topics | v1.3 | Under design |
-| mTLS for clients | v1.3 | Under design |
+| Auth groundwork (config + handshake plumbing) | v1.5 | Planned |
+| TLS enabled by default | v1.5+ | Planned |
+| SASL/PLAIN authentication | v2.0 | Planned |
+| SASL/SCRAM authentication | v2.0 | Planned |
+| ACL layer for topics | v2.0 | Under design |
+| mTLS for clients | v2.0 | Under design |
 | Audit logging | v1.4 | Proposed |
 
 ---

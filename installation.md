@@ -13,8 +13,8 @@ permalink: /installation/
 helm upgrade --install kafscale deploy/helm/kafscale \
   --namespace kafscale --create-namespace \
   --set operator.etcdEndpoints[0]=http://etcd.kafscale.svc:2379 \
-  --set operator.image.tag=v0.1.0 \
-  --set console.image.tag=v0.1.0
+  --set operator.image.tag=v1.1.0 \
+  --set console.image.tag=v1.1.0
 ```
 
 Key values:
@@ -36,8 +36,8 @@ For managed etcd (simplest setup):
 helm upgrade --install kafscale deploy/helm/kafscale \
   --namespace kafscale --create-namespace \
   --set operator.etcdEndpoints={} \
-  --set operator.image.tag=v0.1.0 \
-  --set console.image.tag=v0.1.0
+  --set operator.image.tag=v1.1.0 \
+  --set console.image.tag=v1.1.0
 ```
 
 ---
