@@ -146,13 +146,13 @@ spec:
 
 | Feature | Target | Status |
 |---------|--------|--------|
-| Auth groundwork (config + handshake plumbing) | v1.5 | Planned |
-| TLS enabled by default | v1.5+ | Planned |
+| TLS enabled by default | v1.5 | Planned |
+| SASL groundwork | v1.5 | Planned |
 | SASL/PLAIN authentication | v2.0 | Planned |
 | SASL/SCRAM authentication | v2.0 | Planned |
 | ACL layer for topics | v2.0 | Under design |
-| mTLS for clients | v2.0 | Under design |
-| Audit logging | v1.4 | Proposed |
+| mTLS for clients | v2.1 | Proposed |
+| Audit logging | v2.2 | Proposed |
 
 ---
 

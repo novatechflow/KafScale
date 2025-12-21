@@ -2,35 +2,115 @@
 layout: doc
 title: Roadmap
 description: Completed milestones, current work, and what is planned next.
+permalink: /roadmap/
 ---
 
 # Roadmap
 
-## What’s done
+KafScale follows a milestone-based release process. This page summarizes what's shipped, what's in progress, and what's planned.
 
-- Core protocol parsing and metadata support
-- Produce and fetch paths with S3-backed durability
-- Consumer group coordination with offset and group persistence
-- DescribeGroups/ListGroups ops visibility
-- OffsetForLeaderEpoch consumer recovery
-- DescribeConfigs/AlterConfigs ops tuning
-- CreatePartitions/DeleteGroups ops APIs
-- etcd topic/partition management
-- Observability (structured logging, Grafana templates, Prometheus metrics)
-- Kubernetes operator with managed etcd + snapshot backups
-- End-to-end tests for broker durability and operator resilience
-- Admin ops API e2e coverage
-- Security review (TLS/auth)
-- End-to-end tests multi-segment restart durability
+---
 
-## What’s in progress
+## Released (v1.0)
 
-- Performance benchmarks
+### Core protocol
 
-## What’s planned
+- Kafka wire protocol parsing (17 APIs advertised)
+- Produce path (v0-9) with S3-backed durability
+- Fetch path (v11-13) with LRU caching and read-ahead
+- Metadata API (v0-12) with topic/partition discovery
+- ListOffsets (v0)
 
-See the GitHub roadmap issues for near-term planning and design specs.
+### Consumer groups
+
+- FindCoordinator (v3)
+- JoinGroup, SyncGroup, Heartbeat, LeaveGroup (v4)
+- OffsetCommit (v3) and OffsetFetch (v5) with etcd persistence
+- DescribeGroups (v5) and ListGroups (v5) for ops visibility
+- OffsetForLeaderEpoch (v3) for consumer recovery
+
+### Admin APIs
+
+- CreateTopics (v0), DeleteTopics (v0)
+- CreatePartitions (v0-3)
+- DescribeConfigs (v4), AlterConfigs (v1)
+- DeleteGroups (v0-2)
+
+### Storage
+
+- S3 segment format with sparse indexes
+- Snappy, LZ4, ZSTD compression
+- etcd-based topic and partition management
+- Lifecycle-based retention via S3 policies
+
+### Operations
+
+- Kubernetes operator with CRDs (KafscaleCluster, KafscaleTopic)
+- Managed etcd with automated snapshots to S3
+- Prometheus metrics and Grafana dashboards
+- Structured JSON logging
+- S3 health state monitoring
+
+### Testing
+
+- End-to-end broker durability tests
+- Multi-segment restart recovery tests
+- Operator resilience tests
+- Admin API e2e coverage
+
+---
+
+## Planned
+
+| Feature | Target | Description |
+|---------|--------|-------------|
+| TLS enabled by default | v1.5 | Production Helm templates with TLS out of the box |
+| SASL groundwork | v1.5 | Internal scaffolding for authentication |
+| SASL/PLAIN authentication | v2.0 | Username/password auth for clients |
+| SASL/SCRAM authentication | v2.0 | Secure credential storage |
+| Topic-level ACLs | v2.0 | Read/write permissions per topic |
+| Console improvements | v2.1 | Topic browser, consumer lag dashboard |
+| Multi-cluster federation | v2.2 | Cross-cluster topic mirroring |
+| Audit logging | v2.2 | Who did what, when |
+
+---
+
+## Explicitly not planned
+
+Some features are intentionally out of scope for KafScale. These are architectural decisions, not missing features.
+
+| Feature | Reason |
+|---------|--------|
+| Transactions (EOS) | Requires coordination complexity incompatible with stateless brokers |
+| Compacted topics | Requires stateful compaction process; use a database instead |
+| Kafka replication protocols | LeaderAndIsr, UpdateMetadata, etc. not needed with S3 as source of truth |
+| Embedded stream processing | Out of scope; use Flink, Wayang, Spark, or other external engines |
+| Tiered storage | S3 is already the primary tier; no local disk to tier from |
+| Sub-10ms latency | Fundamental S3 round-trip constraint; use Kafka or Redpanda |
+| KRaft / ZooKeeper | etcd is the metadata store; no Kafka controller needed |
+
+If your use case requires these features, KafScale may not be the right fit. See [Comparison](/comparison/) for alternatives.
+
+---
 
 ## How to request features
 
-Open a GitHub issue with your use case, expected throughput, and operational constraints.
+1. Check [GitHub Issues](https://github.com/novatechflow/kafscale/issues) for existing requests
+2. Open a new issue with:
+   - Your use case
+   - Expected throughput and latency requirements
+   - Operational constraints (cloud provider, compliance, etc.)
+3. Join the discussion in [GitHub Discussions](https://github.com/novatechflow/kafscale/discussions)
+
+We prioritize features based on community demand and alignment with KafScale's core mission: simple, stateless, S3-native Kafka compatibility.
+
+---
+
+## Release history
+
+| Version | Date | Highlights |
+|---------|------|------------|
+| v1.1.0 | 2025-12-21 | CodeQL fixes, dependency refresh, fuzzing and security docs |
+| v1.0.0 | 2025-12-20 | Initial stable release with core protocol, consumer groups, operator |
+
+See [GitHub Releases](https://github.com/novatechflow/kafscale/releases) for full changelogs.
