@@ -3,6 +3,8 @@ layout: doc
 title: Docs
 description: Guides, reference, and architecture docs for KafScale.
 permalink: /docs/
+nav_title: Overview
+nav_order: 1
 ---
 
 # Docs
@@ -13,17 +15,22 @@ Everything you need to run, operate, and extend KafScale.
 
 - [Quickstart](/quickstart/)
 - [Installation](/installation/)
+- [User guide](/user-guide/)
 - [Architecture](/architecture/)
 
 ## Configure and operate
 
-- [Configuration](/configuration/)
+- [Runtime Settings](/configuration/)
+- [MCP](/mcp/)
 - [Operations](/operations/)
 - [Security](/security/)
 
 ## Reference
 
-- [API](/api/)
+- [Protocol](/protocol/)
+- [Ops API](/ops-api/)
+- [Metrics](/metrics/)
+- [MCP Server](/mcp-server/)
 - [Storage format](/storage-format/)
 - [S3 health](/s3-health/)
 
@@ -32,4 +39,5 @@ Everything you need to run, operate, and extend KafScale.
 - [Roadmap](/roadmap/)
 - [FAQ](/faq/)
 - [Comparison](/comparison/)
+- [Development](/development/)
 - [Contributing](/contributing/)

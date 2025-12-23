@@ -2,6 +2,9 @@
 layout: doc
 title: Contributing
 description: Development setup, testing, and PR process for KafScale.
+permalink: /contributing/
+nav_title: Contributing
+nav_order: 11
 ---
 
 # Contributing

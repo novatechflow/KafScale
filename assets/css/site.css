@@ -276,7 +276,7 @@ a:visited {
 }
 
 .content-inner {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   width: 100%;
 }
@@ -411,13 +411,13 @@ pre.highlight {
 }
 
 .doc-content {
-  max-width: 1200px;
+  max-width: 100%;
   min-width: 0;
 }
 
 .doc-shell {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr) 220px;
   gap: 2rem;
   align-items: start;
 }
@@ -448,6 +448,7 @@ pre.highlight {
 }
 
 .doc-sidebar-nav a {
+  display: block;
   padding: 0.35rem 0.5rem;
   border-radius: 10px;
   color: var(--text);
@@ -457,6 +458,86 @@ pre.highlight {
 .doc-sidebar-nav a[aria-current="page"] {
   background: rgba(14, 165, 233, 0.14);
   color: var(--text);
+}
+
+.doc-toc {
+  position: sticky;
+  top: 6.5rem;
+  align-self: start;
+  padding: 1.1rem 1rem;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.doc-toc-title {
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.doc-toc-nav {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.doc-toc-link {
+  display: block;
+  padding: 0.3rem 0.45rem;
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.doc-toc-link:hover {
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.doc-toc-link-sub {
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.doc-sidebar-group {
+  margin-top: 0.2rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+
+.doc-sidebar-group-title {
+  list-style: none;
+  cursor: pointer;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding: 0.4rem 0.2rem;
+}
+
+.doc-sidebar-group-title::-webkit-details-marker {
+  display: none;
+}
+
+.doc-sidebar-group-title::after {
+  content: "+";
+  float: right;
+  color: var(--muted);
+}
+
+.doc-sidebar-group[open] .doc-sidebar-group-title::after {
+  content: "–";
+}
+
+.doc-sidebar-group-links {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.2rem 0 0.3rem 0.4rem;
 }
 
 .doc-content h1,
@@ -987,6 +1068,10 @@ pre.highlight {
 
   .doc-content {
     order: 1;
+  }
+
+  .doc-toc {
+    display: none;
   }
 }
 

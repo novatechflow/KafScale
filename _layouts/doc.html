@@ -78,11 +78,16 @@
         <article class="doc-content">
           {{ content }}
         </article>
+        <aside class="doc-toc" aria-label="On this page">
+          <div class="doc-toc-title">On this page</div>
+          <nav class="doc-toc-nav"></nav>
+        </aside>
       </div>
       {% endif %}
     </main>
     {% include footer.html %}
   </div>
   <script src="/assets/js/theme.js" defer></script>
+  <script src="/assets/js/doc-toc.js" defer></script>
 </body>
 </html>

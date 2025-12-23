@@ -3,6 +3,8 @@ layout: doc
 title: Quickstart
 description: Install the KafScale operator, create your first topic, and stream messages in minutes.
 permalink: /quickstart/
+nav_title: Quickstart
+nav_order: 2
 ---
 
 # Quickstart
@@ -70,11 +72,11 @@ helm upgrade --install kafscale deploy/helm/kafscale \
 
 ---
 
-## 4. Create a KafscaleCluster
+## 4. Create a KafScaleCluster
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleCluster
+kind: KafScaleCluster
 metadata:
   name: demo
   namespace: kafscale
@@ -103,7 +105,7 @@ For S3-compatible storage (MinIO), add `s3.endpoint`.
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleTopic
+kind: KafScaleTopic
 metadata:
   name: orders
   namespace: kafscale
@@ -160,61 +162,11 @@ segment-00000000000000000000.index
 
 ---
 
-## Using Docker Compose (local development)
+## Next steps
 
-For local testing without Kubernetes:
-
-```bash
-git clone https://github.com/novatechflow/kafscale.git
-cd kafscale
-docker-compose up -d
-```
-
-This starts a broker on port 9092, etcd on port 2379, and MinIO on port 9000.
-
-Test with:
-
-```bash
-make test-produce-consume
-```
-
----
-
-## Using existing Kafka clients
-
-KafScale is compatible with standard Kafka clients. No code changes required.
-
-Java:
-
-```java
-Properties props = new Properties();
-props.put("bootstrap.servers", "127.0.0.1:9092");
-props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
-props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
-
-KafkaProducer<String, String> producer = new KafkaProducer<>(props);
-producer.send(new ProducerRecord<>("orders", "key", "value"));
-```
-
-Python (kafka-python):
-
-```python
-from kafka import KafkaProducer
-
-producer = KafkaProducer(bootstrap_servers='127.0.0.1:9092')
-producer.send('orders', b'hello world')
-producer.flush()
-```
-
-Go (franz-go):
-
-```go
-client, _ := kgo.NewClient(kgo.SeedBrokers("127.0.0.1:9092"))
-defer client.Close()
-
-record := &kgo.Record{Topic: "orders", Value: []byte("hello world")}
-client.ProduceSync(context.Background(), record)
-```
+- [Installation](/installation/) for Helm values, CRDs, and local dev options
+- [User Guide](/user-guide/) for post-install workflows
+- [Runtime Settings](/configuration/) for environment variables
 
 ---
 
@@ -222,5 +174,5 @@ client.ProduceSync(context.Background(), record)
 
 - [Architecture](/architecture/) for how KafScale works
 - [Operations](/operations/) for production hardening
-- [Configuration](/configuration/) for full environment variable reference
+- [Runtime Settings](/configuration/) for full environment variable reference
 - [Protocol](/protocol/) for Kafka API compatibility details

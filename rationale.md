@@ -3,7 +3,7 @@ layout: doc
 title: Rationale
 description: Why KafScale uses stateless brokers and object storage instead of traditional Kafka clusters.
 permalink: /rationale/
-sidebar: false
+
 ---
 
 # Rationale

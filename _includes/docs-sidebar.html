@@ -1,8 +1,31 @@
 <aside class="doc-sidebar" aria-label="Docs navigation">
   <div class="doc-sidebar-title">Docs</div>
   <nav class="doc-sidebar-nav">
-    {% for item in site.data.docs_nav %}
-      <a href="{{ item.url }}" {% if page.url == item.url %}aria-current="page"{% endif %}>{{ item.title }}</a>
+    {% assign items = site.docs | sort: "nav_order" %}
+    {% for item in items %}
+      {% if item.nav_title and item.nav_group == nil %}
+      <a href="{{ item.url }}" {% if page.url == item.url %}aria-current="page"{% endif %}>{{ item.nav_title }}</a>
+      {% endif %}
     {% endfor %}
+
+    {% assign refs = items | where: "nav_group", "References" %}
+    {% if refs.size > 0 %}
+      {% assign refs_current = false %}
+      {% for item in refs %}
+        {% if page.url == item.url %}
+          {% assign refs_current = true %}
+        {% endif %}
+      {% endfor %}
+      <details class="doc-sidebar-group" {% if refs_current %}open{% endif %}>
+        <summary class="doc-sidebar-group-title">References</summary>
+        <div class="doc-sidebar-group-links">
+          {% for item in refs %}
+            {% if item.nav_title %}
+            <a href="{{ item.url }}" {% if page.url == item.url %}aria-current="page"{% endif %}>{{ item.nav_title }}</a>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </details>
+    {% endif %}
   </nav>
 </aside>

@@ -1,13 +1,16 @@
 ---
 layout: doc
-title: Configuration Reference
-description: Broker, S3, etcd, consumer group, and operator configuration for KafScale.
+title: Runtime Settings
+description: Broker, S3, etcd, consumer group, and operator runtime settings for KafScale.
 permalink: /configuration/
+nav_title: Runtime Settings
+nav_order: 1
+nav_group: References
 ---
 
-# Configuration Reference
+# Runtime Settings
 
-All configuration is done via environment variables. Set these in your Helm values, KafscaleCluster CRD, or container spec.
+All configuration is done via environment variables. Set these in your Helm values, KafScaleCluster CRD, or container spec.
 
 ---
 
@@ -36,6 +39,9 @@ All configuration is done via environment variables. Set these in your Helm valu
 | `KAFSCALE_S3_BUCKET` | required | S3 bucket for segments and snapshots |
 | `KAFSCALE_S3_REGION` | `us-east-1` | S3 region |
 | `KAFSCALE_S3_ENDPOINT` | | S3 endpoint override (for MinIO, etc) |
+| `KAFSCALE_S3_READ_BUCKET` | | Optional read replica bucket (CRR/MRAP) |
+| `KAFSCALE_S3_READ_REGION` | | Optional read replica region |
+| `KAFSCALE_S3_READ_ENDPOINT` | | Optional read replica endpoint override |
 | `KAFSCALE_S3_PATH_STYLE` | `false` | Use path-style addressing instead of virtual-hosted |
 | `KAFSCALE_S3_KMS_ARN` | | KMS key ARN for server-side encryption (SSE-KMS) |
 
@@ -129,7 +135,7 @@ See [Security](/security/) for TLS setup instructions.
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleCluster
+kind: KafScaleCluster
 metadata:
   name: prod
   namespace: kafscale

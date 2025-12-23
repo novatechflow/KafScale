@@ -3,6 +3,8 @@ layout: doc
 title: FAQ
 description: Common questions about KafScale, Kafka compatibility, and S3 durability.
 permalink: /faq/
+nav_title: FAQ
+nav_order: 10
 ---
 
 # FAQ

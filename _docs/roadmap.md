@@ -3,6 +3,8 @@ layout: doc
 title: Roadmap
 description: Completed milestones, current work, and what is planned next.
 permalink: /roadmap/
+nav_title: Roadmap
+nav_order: 8
 ---
 
 # Roadmap
@@ -45,7 +47,7 @@ KafScale follows a milestone-based release process. This page summarizes what's 
 
 ### Operations
 
-- Kubernetes operator with CRDs (KafscaleCluster, KafscaleTopic)
+- Kubernetes operator with CRDs (KafScaleCluster, KafScaleTopic)
 - Managed etcd with automated snapshots to S3
 - Prometheus metrics and Grafana dashboards
 - Structured JSON logging

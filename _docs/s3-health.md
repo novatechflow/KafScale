@@ -3,6 +3,9 @@ layout: doc
 title: S3 Health States
 description: Definitions, metrics, and alert thresholds for KafScale S3 health state transitions.
 permalink: /s3-health/
+nav_title: S3 Health
+nav_order: 7
+nav_group: References
 ---
 
 # S3 Health States
@@ -96,7 +99,7 @@ Wire S3 health into Prometheus Alertmanager:
 groups:
   - name: kafscale-s3-health
     rules:
-      - alert: KafscaleS3Unavailable
+      - alert: KafScaleS3Unavailable
         expr: kafscale_s3_health_state == 2
         for: 0m
         labels:
@@ -105,7 +108,7 @@ groups:
           summary: "KafScale S3 unavailable"
           description: "Broker {{ $labels.pod }} cannot reach S3. Produces are rejected."
 
-      - alert: KafscaleS3Degraded
+      - alert: KafScaleS3Degraded
         expr: kafscale_s3_health_state == 1
         for: 5m
         labels:
@@ -114,7 +117,7 @@ groups:
           summary: "KafScale S3 degraded"
           description: "Broker {{ $labels.pod }} S3 latency or error rate elevated for 5+ minutes."
 
-      - alert: KafscaleS3LatencyHigh
+      - alert: KafScaleS3LatencyHigh
         expr: kafscale_s3_latency_ms_avg > 300
         for: 10m
         labels:
@@ -123,7 +126,7 @@ groups:
           summary: "KafScale S3 latency elevated"
           description: "Average S3 latency {{ $value }}ms on {{ $labels.pod }}."
 
-      - alert: KafscaleS3ErrorRateHigh
+      - alert: KafScaleS3ErrorRateHigh
         expr: kafscale_s3_error_rate > 0.005
         for: 5m
         labels:
@@ -204,5 +207,5 @@ curl http://localhost:9093/ops/health/s3/history?minutes=60
 ## Next steps
 
 - [Operations](/operations/) for monitoring and scaling
-- [Configuration](/configuration/) for all environment variables
+- [Runtime Settings](/configuration/) for all environment variables
 - [Metrics](/metrics/) for complete metrics reference

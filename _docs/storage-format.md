@@ -2,6 +2,10 @@
 layout: doc
 title: Storage Format
 description: Segment file format, index layout, cache architecture, and S3 key structure for KafScale storage.
+permalink: /storage-format/
+nav_title: Storage Format
+nav_order: 6
+nav_group: References
 ---
 
 # Storage Format
@@ -313,7 +317,7 @@ Set per-topic in CRD:
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleTopic
+kind: KafScaleTopic
 metadata:
   name: logs
   namespace: kafscale

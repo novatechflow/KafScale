@@ -3,6 +3,8 @@ layout: doc
 title: Installation
 description: Install KafScale with Helm, review CRD examples, and prepare local dev tooling.
 permalink: /installation/
+nav_title: Installation
+nav_order: 3
 ---
 
 # Installation
@@ -64,11 +66,11 @@ make demo-platform
 
 ## Kubernetes CRDs
 
-### KafscaleCluster
+### KafScaleCluster
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleCluster
+kind: KafScaleCluster
 metadata:
   name: demo
   namespace: kafscale
@@ -87,7 +89,7 @@ With external etcd:
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleCluster
+kind: KafScaleCluster
 metadata:
   name: demo
   namespace: kafscale
@@ -109,7 +111,7 @@ With S3-compatible storage (MinIO):
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleCluster
+kind: KafScaleCluster
 metadata:
   name: demo
   namespace: kafscale
@@ -124,11 +126,11 @@ spec:
     endpoints: []
 ```
 
-### KafscaleTopic
+### KafScaleTopic
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleTopic
+kind: KafScaleTopic
 metadata:
   name: orders
   namespace: kafscale
@@ -141,7 +143,7 @@ With retention and compression:
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleTopic
+kind: KafScaleTopic
 metadata:
   name: logs
   namespace: kafscale
@@ -153,11 +155,11 @@ spec:
     compression.type: "zstd"
 ```
 
-### KafscaleSnapshot (etcd backup)
+### KafScaleSnapshot (etcd backup)
 
 ```yaml
 apiVersion: kafscale.io/v1alpha1
-kind: KafscaleSnapshot
+kind: KafScaleSnapshot
 metadata:
   name: daily-backup
   namespace: kafscale
@@ -221,5 +223,5 @@ Start small and scale horizontally based on metrics.
 ## Next steps
 
 - [Quickstart](/quickstart/) for a complete walkthrough
-- [Configuration](/configuration/) for environment variables
+- [Runtime Settings](/configuration/) for environment variables
 - [Operations](/operations/) for production hardening

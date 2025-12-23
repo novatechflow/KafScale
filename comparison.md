@@ -2,7 +2,7 @@
 layout: doc
 title: Comparison
 description: Compare KafScale with Kafka-compatible alternatives across architecture, performance, licensing, and cost.
-sidebar: false
+
 ---
 
 <div class="comparison-hero">
@@ -10,7 +10,7 @@ sidebar: false
   <p>An honest comparison of Kafka-compatible streaming platforms. We highlight the architectural and licensing tradeoffs that matter most—including where KafScale isn't the right fit.</p>
 </div>
 
-# License comparison
+## License comparison
 
 Licensing determines your long-term flexibility. This matters more than most vendors admit.
 
@@ -54,7 +54,7 @@ Licensing determines your long-term flexibility. This matters more than most ven
 
 **Why license matters:** BSL and proprietary licenses restrict how you can use the software. If you're building a platform, offering managed services, or want to avoid vendor dependency, Apache 2.0 is the only safe choice.
 
-# Vertical comparison
+## Vertical comparison
 
 <div class="comparison-stack">
   <section class="product-card highlight">
@@ -148,7 +148,7 @@ Licensing determines your long-term flexibility. This matters more than most ven
   </section>
 </div>
 
-# Architecture comparison
+## Architecture comparison
 
 <div class="format-card">
   <div class="format-row header">
@@ -188,7 +188,7 @@ Licensing determines your long-term flexibility. This matters more than most ven
   </div>
 </div>
 
-# When to use what
+## When to use what
 
 | Use case | Recommended | Why |
 |----------|-------------|-----|
@@ -199,9 +199,9 @@ Licensing determines your long-term flexibility. This matters more than most ven
 | **BYOC with Confluent ecosystem** | WarpStream | Confluent-backed, integrates with their tooling |
 | **Avoid vendor lock-in at all costs** | KafScale, Apache Kafka | Only Apache 2.0 options |
 
-# Cost snapshot
+## Cost snapshot
 
-Estimated monthly cost for 100 GB/day ingestion, 7-day retention, 3-node cluster:
+Estimated monthly cost for 100 GB/day ingestion, 7-day retention, 3-node cluster. See [Operations](/operations/#capacity-cost) for the sizing assumptions.
 
 <div class="pricing-table">
   <table>
@@ -255,7 +255,7 @@ Estimated monthly cost for 100 GB/day ingestion, 7-day retention, 3-node cluster
 - WarpStream and Bufstream have license/usage fees on top of infrastructure
 - Apache Kafka and Redpanda require more compute for replication overhead
 
-# Feature matrix
+## Feature matrix
 
 <div class="comparison-table-wrapper">
 <table class="comparison-table">
@@ -427,7 +427,7 @@ Estimated monthly cost for 100 GB/day ingestion, 7-day retention, 3-node cluster
 
 **Legend:** ✓ Yes &nbsp;&nbsp; ✗ No &nbsp;&nbsp; ◐ Partial
 
-# The honest tradeoffs
+## The honest tradeoffs
 
 **KafScale is NOT for you if:**
 
