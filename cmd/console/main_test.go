@@ -151,6 +151,8 @@ func setEtcdPorts(t *testing.T, cfg *embed.Config, clientPort, peerPort string) 
 	cfg.AdvertiseClientUrls = []url.URL{*clientURL}
 	cfg.ListenPeerUrls = []url.URL{*peerURL}
 	cfg.AdvertisePeerUrls = []url.URL{*peerURL}
+	cfg.Name = "default"
+	cfg.InitialCluster = cfg.InitialClusterFromName(cfg.Name)
 }
 
 func killProcessesOnPort(port string) error {
