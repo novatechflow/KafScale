@@ -85,7 +85,6 @@ func TestOperatorEtcdSnapshotKindE2E(t *testing.T) {
 	loadImage(t, ctx, clusterName, operatorImage)
 	loadImage(t, ctx, clusterName, consoleImage)
 	loadImage(t, ctx, clusterName, e2eClientImage)
-	loadImage(t, ctx, clusterName, kafkaCliImage)
 
 	chartPath := filepath.Join(repoRoot(t), "deploy", "helm", "kafscale")
 	operatorRepo, operatorTag := splitImage(operatorImage)
