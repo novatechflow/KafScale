@@ -31,6 +31,15 @@ Before operating a production cluster:
 - **Startup gating**: Broker pods exit if they cannot read metadata or write a probe object to S3, so Kubernetes restarts them instead of leaving a stuck listener in place.
 - **Leader IDs**: Each broker advertises a numeric NodeID in etcd. In a single-node demo you’ll always see `Leader=0` in the Console’s topic detail.
 
+## External access
+
+Expose the console UI only when needed:
+
+- Enable console ingress in Helm values (`console.ingress.*`), or
+- Set `console.service.type=LoadBalancer` for a managed endpoint.
+
+For full Helm values and deployment notes, see [Helm](/helm/).
+
 ## Monitoring
 
 ### Prometheus endpoints
@@ -370,6 +379,7 @@ aws s3 ls s3://kafscale-prod-eu-west-1/crr-test/
 | `kafscale_s3_replica_miss_ratio` | Ratio of replica misses to total reads | > 5% sustained |
 
 **Prometheus alerts:**
+{% raw %}
 ```yaml
 groups:
   - name: kafscale-crr
@@ -391,6 +401,7 @@ groups:
         annotations:
           summary: "High S3 read latency - possible CRR issues"
 ```
+{% endraw %}
 
 **AWS-side CRR monitoring:**
 ```bash

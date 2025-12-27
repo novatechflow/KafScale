@@ -30,6 +30,7 @@ Everything you need to run, operate, and extend KafScale.
 - [Protocol](/protocol/)
 - [Ops API](/ops-api/)
 - [Metrics](/metrics/)
+- [Helm](/helm/)
 - [MCP Server](/mcp-server/)
 - [Storage format](/storage-format/)
 - [S3 health](/s3-health/)

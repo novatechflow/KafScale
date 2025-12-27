@@ -72,6 +72,15 @@ helm upgrade --install kafscale deploy/helm/kafscale \
 
 ---
 
+## 3.1 Optional: expose the console UI
+
+The console service is a ClusterIP by default. For external access:
+
+- Enable console ingress in Helm values (`console.ingress.*`), or
+- Set `console.service.type=LoadBalancer`.
+
+---
+
 ## 4. Create a KafScaleCluster
 
 ```yaml
