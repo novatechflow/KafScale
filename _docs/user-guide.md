@@ -7,69 +7,68 @@ nav_title: User Guide
 nav_order: 3
 ---
 
-<!--
-Copyright 2025 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
-This project is supported and financed by Scalytics, Inc. (www.scalytics.io).
+# KafScale User Guide
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+KafScale is a Kafka-compatible, S3-backed message transport system. It keeps brokers stateless, stores data in S3, and relies on Kubernetes for scheduling and scaling. This guide covers how to interact with the platform once it is deployed.
 
-    http://www.apache.org/licenses/LICENSE-2.0
+## Before you start
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
--->
+**Latency expectations:** KafScale has ~500ms end-to-end latency due to S3 flush semantics. It's ideal for ETL, logs, CDC, and async events—not for sub-100ms use cases like real-time bidding or gaming.
 
-# Kafscale User Guide
+**Authentication:** KafScale v1.x does not yet support SASL authentication or mTLS. Network-level security (Kubernetes NetworkPolicies, private VPCs) is the current isolation mechanism. See the [Security](/security/) page for the roadmap.
 
-Kafscale is a Kafka-compatible, S3-backed message transport system. It keeps brokers stateless, stores data in S3, and relies on Kubernetes for scheduling and scaling. This guide summarizes how to interact with the platform once it is deployed.
+**TLS:** If TLS is enabled, it's configured at the Kubernetes Ingress or LoadBalancer level by your operator—not in KafScale itself. Check with your platform team for connection details.
 
 ## Concepts
 
-- **Topics / Partitions**: match upstream Kafka semantics. All Kafka client libraries continue to work.
-- **Brokers**: stateless pods accepting Kafka protocol traffic on port 9092 and metrics + gRPC control on 9093.
-- **Metadata**: stored in etcd, encoded via protobufs (`kafscale.metadata.*`).
-- **Storage**: message segments live in S3 buckets; brokers only keep in-memory caches.
-- **Operator**: Kubernetes controller that provisions brokers, topics, and wiring based on CRDs.
+| Concept | Description |
+|---------|-------------|
+| **Topics / Partitions** | Standard Kafka semantics. All Kafka client libraries work. |
+| **Brokers** | Stateless pods accepting Kafka protocol on port 9092, metrics on 9093. |
+| **Metadata** | Stored in etcd, encoded via protobufs (`kafscale.metadata.*`). |
+| **Storage** | Message segments live in S3; brokers keep only in-memory caches. |
+| **Operator** | Kubernetes controller that provisions brokers, topics, and wiring via CRDs. |
 
 ## Client Examples
 
-Use this section to copy/paste a minimal example for your client. If you do not control client config (managed apps, hosted integrations), ask the operator team to confirm idempotence/transactions are disabled for Kafscale.
+Use this section to copy/paste minimal examples for your client. If you don't control client config (managed apps, hosted integrations), ask the operator team to confirm idempotence and transactions are disabled.
 
-For install + bootstrap steps, follow [Quickstart](/quickstart/).
+For install and bootstrap steps, see [Quickstart](/quickstart/).
 
 ### Java (plain)
 
-Start with a minimal set of producer properties. We disable idempotence because Kafscale does not support transactional semantics.
+Disable idempotence—KafScale does not support transactional semantics.
 ```properties
 # Java producer properties
 bootstrap.servers=kafscale-broker:9092
 enable.idempotence=false
 acks=1
 ```
-This is the smallest working producer in Java:
+
+**Producer:**
 ```java
-// Java producer
 Properties props = new Properties();
 props.put("bootstrap.servers", "kafscale-broker:9092");
 props.put("enable.idempotence", "false");
 props.put("acks", "1");
-try (KafkaProducer<String, String> producer = new KafkaProducer<>(props, new StringSerializer(), new StringSerializer())) {
+props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+
+try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
     producer.send(new ProducerRecord<>("orders", "key-1", "value-1")).get();
 }
 ```
-Consumers can be as simple as:
+
+**Consumer:**
 ```java
-// Java consumer
 Properties props = new Properties();
 props.put("bootstrap.servers", "kafscale-broker:9092");
 props.put("group.id", "orders-consumer");
 props.put("auto.offset.reset", "earliest");
-try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props, new StringDeserializer(), new StringDeserializer())) {
+props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+
+try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
     consumer.subscribe(Collections.singletonList("orders"));
     ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(5));
     for (ConsumerRecord<String, String> record : records) {
@@ -78,9 +77,9 @@ try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props, new Str
 }
 ```
 
-If you use Spring Boot, drop this into `application.yml`:
+### Spring Boot
 ```yaml
-# Spring Boot (application.yml)
+# application.yml
 spring:
   kafka:
     bootstrap-servers: kafscale-broker:9092
@@ -93,49 +92,78 @@ spring:
       auto-offset-reset: earliest
 ```
 
+### Python (confluent-kafka)
+```python
+from confluent_kafka import Producer, Consumer
+
+# Producer
+producer = Producer({'bootstrap.servers': 'kafscale-broker:9092'})
+producer.produce('orders', key='key-1', value='value-1')
+producer.flush()
+
+# Consumer
+consumer = Consumer({
+    'bootstrap.servers': 'kafscale-broker:9092',
+    'group.id': 'orders-consumer',
+    'auto.offset.reset': 'earliest'
+})
+consumer.subscribe(['orders'])
+
+while True:
+    msg = consumer.poll(1.0)
+    if msg is None:
+        continue
+    if msg.error():
+        print(f"Error: {msg.error()}")
+        continue
+    print(f"{msg.key()}: {msg.value()}")
+```
+
 ### Go (franz-go)
 
-Franz-go is the most feature-complete Kafka client in Go. These examples are minimal and production-safe for Kafscale.
+Franz-go is the most feature-complete Kafka client in Go.
+
+**Producer:**
 ```go
-// franz-go producer
 client, _ := kgo.NewClient(
-	kgo.SeedBrokers("kafscale-broker:9092"),
-	kgo.AllowAutoTopicCreation(),
+    kgo.SeedBrokers("kafscale-broker:9092"),
+    kgo.AllowAutoTopicCreation(),
 )
 defer client.Close()
+
 client.ProduceSync(ctx, &kgo.Record{Topic: "orders", Value: []byte("hello")})
 ```
-Consumer example:
+
+**Consumer:**
 ```go
-// franz-go consumer
-consumer, _ := kgo.NewClient(
-	kgo.SeedBrokers("kafscale-broker:9092"),
-	kgo.ConsumerGroup("orders-consumer"),
-	kgo.ConsumeTopics("orders"),
+client, _ := kgo.NewClient(
+    kgo.SeedBrokers("kafscale-broker:9092"),
+    kgo.ConsumerGroup("orders-consumer"),
+    kgo.ConsumeTopics("orders"),
 )
-defer consumer.CloseAllowingRebalance()
-fetches := consumer.PollFetches(ctx)
-fetches.EachRecord(func(record *kgo.Record) {
-	fmt.Println(string(record.Value))
+defer client.Close()
+
+fetches := client.PollFetches(ctx)
+fetches.EachRecord(func(r *kgo.Record) {
+    fmt.Println(string(r.Value))
 })
 ```
 
 ### Go (kafka-go)
-
-If you already use `segmentio/kafka-go`, these are the smallest working snippets:
 ```go
-// kafka-go producer
-w := &kafka.Writer{Addr: kafka.TCP("kafscale-broker:9092"), Topic: "orders"}
+// Producer
+w := &kafka.Writer{
+    Addr:  kafka.TCP("kafscale-broker:9092"),
+    Topic: "orders",
+}
 defer w.Close()
-_ = w.WriteMessages(ctx, kafka.Message{Value: []byte("hello")})
-```
-Consumer example:
-```go
-// kafka-go consumer
+w.WriteMessages(ctx, kafka.Message{Value: []byte("hello")})
+
+// Consumer
 r := kafka.NewReader(kafka.ReaderConfig{
-	Brokers: []string{"kafscale-broker:9092"},
-	GroupID: "orders-consumer",
-	Topic:   "orders",
+    Brokers: []string{"kafscale-broker:9092"},
+    GroupID: "orders-consumer",
+    Topic:   "orders",
 })
 defer r.Close()
 m, _ := r.ReadMessage(ctx)
@@ -143,28 +171,208 @@ fmt.Println(string(m.Value))
 ```
 
 ### Kafka CLI
-
-If you just want to test from a shell:
 ```bash
-# Kafka CLI
-kafka-console-producer --bootstrap-server kafscale-broker:9092 --topic orders --producer-property enable.idempotence=false
-kafka-console-consumer --bootstrap-server kafscale-broker:9092 --topic orders --from-beginning
+# Produce
+kafka-console-producer \
+  --bootstrap-server kafscale-broker:9092 \
+  --topic orders \
+  --producer-property enable.idempotence=false
+
+# Consume
+kafka-console-consumer \
+  --bootstrap-server kafscale-broker:9092 \
+  --topic orders \
+  --from-beginning
 ```
+
+## Stream Processing Integration
+
+KafScale is a transport layer—it doesn't include embedded stream processing. This is intentional; [data processing doesn't belong in the message broker](https://www.novatechflow.com/2025/12/data-processing-does-not-belong-in.html). Pair KafScale with external engines like [Apache Flink](https://flink.apache.org/) or [Apache Wayang](https://wayang.apache.org/) for stateful transformations, windowing, and analytics.
+
+### Apache Flink
+
+Flink's Kafka connector works with KafScale out of the box. Disable exactly-once semantics since KafScale does not support transactions.
+
+**Maven dependency:**
+```xml
+<dependency>
+  <groupId>org.apache.flink</groupId>
+  <artifactId>flink-connector-kafka</artifactId>
+  <version>3.1.0-1.18</version>
+</dependency>
+```
+
+**Source (read from KafScale):**
+```java
+KafkaSource<String> source = KafkaSource.<String>builder()
+    .setBootstrapServers("kafscale-broker:9092")
+    .setTopics("orders")
+    .setGroupId("flink-orders")
+    .setStartingOffsets(OffsetsInitializer.earliest())
+    .setValueOnlyDeserializer(new SimpleStringSchema())
+    .build();
+
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+DataStream<String> stream = env.fromSource(
+    source, 
+    WatermarkStrategy.noWatermarks(), 
+    "KafScale Source"
+);
+```
+
+**Sink (write to KafScale):**
+```java
+KafkaSink<String> sink = KafkaSink.<String>builder()
+    .setBootstrapServers("kafscale-broker:9092")
+    .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+        .setTopic("orders-processed")
+        .setValueSerializationSchema(new SimpleStringSchema())
+        .build())
+    .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+    .build();
+
+stream.sinkTo(sink);
+env.execute("Order Processing");
+```
+
+> **Note:** Use `DeliveryGuarantee.AT_LEAST_ONCE`, not `EXACTLY_ONCE`. KafScale does not support Kafka transactions.
+
+### Apache Wayang
+
+Wayang provides a platform-agnostic API that can run on Java or Spark backends. Kafka source/sink support was added in 2024.
+
+**Maven dependencies:**
+```xml
+<dependency>
+  <groupId>org.apache.wayang</groupId>
+  <artifactId>wayang-api-scala-java</artifactId>
+  <version>1.0.0</version>
+</dependency>
+<dependency>
+  <groupId>org.apache.wayang</groupId>
+  <artifactId>wayang-java</artifactId>
+  <version>1.0.0</version>
+</dependency>
+```
+
+**Read from KafScale, process, write back:**
+```java
+Configuration configuration = new Configuration();
+WayangContext wayangContext = new WayangContext(configuration)
+    .withPlugin(Java.basicPlugin());
+
+JavaPlanBuilder planBuilder = new JavaPlanBuilder(wayangContext)
+    .withJobName("OrderProcessing")
+    .withUdfJarOf(MyJob.class);
+
+planBuilder
+    .readKafkaTopic("orders").withName("Load from KafScale")
+    .flatMap(line -> Arrays.asList(line.split("\\W+")))
+    .filter(token -> !token.isEmpty())
+    .map(word -> new Tuple2<>(word.toLowerCase(), 1))
+    .reduceByKey(Tuple2::getField0, 
+        (t1, t2) -> new Tuple2<>(t1.getField0(), t1.getField1() + t2.getField1()))
+    .writeKafkaTopic("orders-counts", 
+        d -> String.format("%s: %d", d.getField0(), d.getField1()),
+        "wayang-job",
+        LoadProfileEstimators.createFromSpecification(
+            "wayang.java.kafkatopicsink.load", configuration));
+```
+
+To switch from Java to Spark backend, change one line:
+```java
+.withPlugin(Spark.basicPlugin());  // instead of Java.basicPlugin()
+```
+
+> **Note:** Wayang's Kafka connector requires Java 17. See [wayang.apache.org](https://wayang.apache.org/blog/kafka-meets-wayang-2/) for full implementation details.
+
+### Other compatible engines
+
+| Engine | Notes |
+|--------|-------|
+| Spark Structured Streaming | Use `kafka` format, set `kafka.bootstrap.servers` |
+| Kafka Streams | Disable EOS: `processing.guarantee=at_least_once` |
+| Redpanda Console / Kowl | Compatible for topic browsing |
+| Conduktor | Compatible for admin UI |
 
 ## Monitoring
 
-- Metrics via Prometheus on port 9093 (`/metrics`)
-- Structured JSON logs from brokers/operators
-- Control-plane queries via the gRPC service defined in `proto/control/broker.proto`
+KafScale exposes Prometheus metrics on port 9093.
+```bash
+# Scrape metrics
+curl http://kafscale-broker:9093/metrics
 
-## Scaling / Maintenance
+# Key metrics to watch
+curl -s http://kafscale-broker:9093/metrics | grep -E "kafscale_(produce|fetch|s3)"
+```
 
-The operator uses Kubernetes HPA and the BrokerControl gRPC API to safely drain partitions before restarts. Users can request manual drains or flushes by invoking those RPCs (CLI tooling TBD).
+**Key metrics:**
 
-## Limits / Non-Goals
+| Metric | Description |
+|--------|-------------|
+| `kafscale_produce_requests_total` | Total produce requests |
+| `kafscale_fetch_requests_total` | Total fetch requests |
+| `kafscale_s3_upload_duration_ms` | S3 segment upload latency |
+| `kafscale_s3_download_duration_ms` | S3 segment download latency |
+| `kafscale_cache_hit_ratio` | LRU cache effectiveness |
 
-- No embedded stream processing features—pair Kafscale with Flink, Wayang, Spark, etc.
-- Transactions, idempotent producers, and log compaction are out of scope for the MVP.
+Brokers also emit structured JSON logs. The operator exposes its own metrics for CRD reconciliation.
 
-For deployment and operations, read [Operations](/operations/).
-For deeper architectural details or development guidance, read `kafscale-spec.md` and [Development](/development/).
+## Troubleshooting
+
+**Test broker connectivity:**
+```bash
+kafka-broker-api-versions --bootstrap-server kafscale-broker:9092
+```
+
+**List topics:**
+```bash
+kafka-topics --bootstrap-server kafscale-broker:9092 --list
+```
+
+**Describe a topic:**
+```bash
+kafka-topics --bootstrap-server kafscale-broker:9092 --describe --topic orders
+```
+
+**Check consumer group lag:**
+```bash
+kafka-consumer-groups \
+  --bootstrap-server kafscale-broker:9092 \
+  --group orders-consumer \
+  --describe
+```
+
+**Common issues:**
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `NOT_LEADER_FOR_PARTITION` | Normal during rebalance | Retry; client handles this |
+| High produce latency | S3 flush taking long | Check S3 health, increase buffer |
+| Consumer lag growing | Slow processing or S3 reads | Scale consumers, check cache hit ratio |
+| `UNKNOWN_TOPIC` | Topic not created | Create via CRD or enable auto-create |
+
+## Scaling and Maintenance
+
+The operator uses Kubernetes HPA and the BrokerControl gRPC API to safely drain partitions before restarts.
+
+- **Scaling up:** Add replicas via `kubectl scale` or adjust the CRD; partitions rebalance automatically.
+- **Scaling down:** The operator drains partitions before terminating pods.
+- **Rolling restarts:** Use `kubectl rollout restart`; the operator coordinates graceful handoff.
+
+## Limits and Non-Goals
+
+KafScale intentionally does not support:
+
+- **Transactions / exactly-once semantics** — use at-least-once with idempotent consumers
+- **Idempotent producers** — disable `enable.idempotence`
+- **Log compaction** — out of scope for MVP
+- **Embedded stream processing** — pair with Flink, Wayang, Spark, etc.
+- **Sub-100ms latency** — S3 flush semantics add ~500ms
+
+## Next steps
+
+- [Configuration](/configuration/) — tune cache sizes, buffer thresholds, S3 settings
+- [Operations](/operations/) — S3 health states, failure modes, multi-region CRR
+- [Security](/security/) — current posture, TLS setup, auth roadmap
+- [Architecture](/architecture/) — how data flows through the system
