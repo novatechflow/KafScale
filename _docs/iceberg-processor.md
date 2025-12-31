@@ -29,7 +29,7 @@ limitations under the License.
 
 The Iceberg Processor is a KafScale addon that reads completed segments directly from S3 and writes them to Apache Iceberg tables. Like KafScale brokers, the processor is stateless: offsets live in etcd, data lives in S3, output goes to your Iceberg catalog. Pods can scale up, down, or restart without coordination overhead.
 
-This guide is for operators and platform engineers deploying the processor in Kubernetes. It focuses on configuration, behavior, and operations. For implementation details and code changes, see the developer guide: https://github.com/novatechflow/kafscale/blob/main/addons/processors/iceberg-processor/developer.md.
+This guide is for operators and platform engineers deploying the processor in Kubernetes. It focuses on configuration, behavior, and operations. For implementation details and code changes, see the [developer guide](https://github.com/novatechflow/kafscale/blob/main/addons/processors/iceberg-processor/developer.md) in the main branch.
 
 ## What It Does
 
