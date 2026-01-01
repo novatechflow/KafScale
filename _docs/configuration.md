@@ -107,6 +107,7 @@ These are client-side settings, not broker configuration.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KAFSCALE_OPERATOR_ETCD_ENDPOINTS` | | External etcd endpoints; empty uses managed etcd |
+| `KAFSCALE_OPERATOR_ETCD_IMAGE` | `kubesphere/etcd:3.6.4-0` | Managed etcd image |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_BUCKET` | | S3 bucket for etcd snapshots |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_PREFIX` | `etcd-snapshots/` | S3 key prefix for snapshots |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_SCHEDULE` | `0 */6 * * *` | Cron schedule for snapshots |
