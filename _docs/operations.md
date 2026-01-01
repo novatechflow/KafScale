@@ -47,6 +47,43 @@ Broker exposure settings (KafscaleCluster `spec.brokers`):
 - `service.externalTrafficPolicy` – `Cluster` or `Local`.
 - `service.kafkaNodePort` / `service.metricsNodePort` – Optional NodePort overrides.
 
+### Kafka Proxy (external scaling)
+
+For external clients plus broker churn, deploy the Kafka-aware proxy. It answers
+Metadata/FindCoordinator requests with a single stable endpoint (the proxy
+service), then forwards all other Kafka requests to the brokers. This keeps
+clients connected even as broker pods scale or rotate. The proxy is the
+recommended external access layer and enables automated horizontal scaling
+without exposing individual broker pods.
+
+Use the broker Service settings above when you intentionally expose dedicated
+brokers (for example, isolating traffic or pinning producers to specific nodes).
+That path is more controllable but requires explicit endpoint management.
+
+Recommended settings:
+- Run 2+ proxy replicas behind a LoadBalancer service.
+- Point the proxy at etcd via `KAFSCALE_PROXY_ETCD_ENDPOINTS` so it can read the cluster snapshot.
+- Set `KAFSCALE_PROXY_ADVERTISED_HOST`/`KAFSCALE_PROXY_ADVERTISED_PORT` to the public DNS + port clients should use.
+
+Helm values to enable:
+- `proxy.enabled=true`
+- `proxy.etcdEndpoints[0]=http://kafscale-etcd-client.<namespace>.svc.cluster.local:2379`
+- `proxy.advertisedHost=<public DNS>`
+
+Example (HA proxy + external access):
+
+```bash
+helm upgrade --install kafscale deploy/helm/kafscale \
+  --namespace kafscale --create-namespace \
+  --set proxy.enabled=true \
+  --set proxy.replicaCount=2 \
+  --set proxy.service.type=LoadBalancer \
+  --set proxy.service.port=9092 \
+  --set proxy.advertisedHost=kafka.example.com \
+  --set proxy.advertisedPort=9092 \
+  --set proxy.etcdEndpoints[0]=http://kafscale-etcd-client.kafscale.svc.cluster.local:2379
+```
+
 Helm chart docs: `deploy/helm/README.md`.
 
 Example (GKE/AWS/Azure load balancer):
@@ -202,6 +239,7 @@ KafScale depends on etcd for metadata + offsets. Treat etcd as a production data
 - Deploy an odd number of members (3 for most clusters, 5 for higher fault tolerance).
 - Spread members across zones/racks to survive single-AZ failures.
 - Enable compaction/defragmentation and monitor fsync/proposal latency.
+- HA requires a stable client access layer: use a Kafka-aware proxy or per-broker endpoints so bootstrap addresses and leader routing survive broker churn.
 
 ### Operator-managed etcd (default path)
 
@@ -224,6 +262,10 @@ The operator resolves etcd endpoints in this order:
 ### Etcd schema direction
 
 KafScale uses a snapshot-based metadata schema today: the operator publishes a full metadata snapshot to etcd and brokers consume it. We avoid per-key writes for broker registrations and assignments until the ops surface requires it.
+
+### Etcd Availability Signals (clients)
+
+When etcd is unavailable, the broker rejects producer/admin/consumer-group operations with `REQUEST_TIMED_OUT`. Producers see per-partition errors in the Produce response; admin and group APIs return the same code in their response payloads.
 
 ## S3 Health Gating
 
@@ -272,6 +314,16 @@ Snapshot job defaults and operator env overrides:
 - `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_SKIP_PREFLIGHT` (optional, set to `1` to skip the operator S3 write check)
 
 The operator performs an S3 write preflight before enabling snapshots. If the check fails, the `EtcdSnapshotAccess` condition is set to `False` and reconciliation returns an error until access is restored.
+
+### Snapshot Restore (KafScale managed etcd)
+
+When the KafScale operator manages etcd, each cluster pod runs ```restore init containers``` before etcd starts:
+
+- The snapshot download container pulls the latest `.db` snapshot from the configured bucket/prefix.
+- The restore container runs `etcdctl snapshot restore` if the data directory is empty and a snapshot file is present.
+- If no snapshot is available, etcd starts with a clean data directory.
+
+The restore image must include `/bin/sh` and `etcdctl`. Override with `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_ETCDCTL_IMAGE` if you use a custom image.
 
 Minimal env + spec checklist for a smooth run:
 
