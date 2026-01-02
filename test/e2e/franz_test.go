@@ -294,13 +294,45 @@ func waitForBroker(t *testing.T, logs *bytes.Buffer, addr string) {
 func runCmdGetOutput(t *testing.T, ctx context.Context, name string, args ...string) []byte {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, name, args...)
+	applyKubeconfigEnv(cmd)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("command %s %s failed: %v\n%s", name, strings.Join(args, " "), err, buf.String())
+		t.Fatalf("command %s %s failed: %v\n%s", name, strings.Join(args, " "), err, truncateOutput(buf.String()))
 	}
 	return buf.Bytes()
+}
+
+func truncateOutput(out string) string {
+	const maxBytes = 8192
+	if len(out) <= maxBytes {
+		return out
+	}
+	return out[len(out)-maxBytes:]
+}
+
+func applyKubeconfigEnv(cmd *exec.Cmd) {
+	if os.Getenv("KAFSCALE_E2E_KUBECONFIG") == "" {
+		return
+	}
+	env := cmd.Env
+	if env == nil {
+		env = os.Environ()
+	}
+	env = upsertEnv(env, "KUBECONFIG", os.Getenv("KAFSCALE_E2E_KUBECONFIG"))
+	cmd.Env = env
+}
+
+func upsertEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }
 
 func parseBoolEnv(name string) bool {
