@@ -188,6 +188,16 @@ spec:
 
 ## etcd Configuration
 
+etcd stores topic metadata, consumer offsets, and cluster coordination state. It's the only stateful component you need to back up.
+
+### Availability Signals
+
+When etcd is unavailable, brokers reject producer/admin/consumer-group operations with `REQUEST_TIMED_OUT`. Producers see per-partition errors in the Produce response; admin and group APIs return the same code in their response payloads.
+
+Fetch requests for cached segments continue to work—brokers serve reads from their local cache even during etcd outages.
+
+### Connection Settings
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KAFSCALE_ETCD_ENDPOINTS` | required | Comma-separated etcd endpoints |
@@ -295,15 +305,17 @@ When `etcd.endpoints` is empty in the CRD, the operator deploys a managed etcd c
 
 ### etcd Snapshot Settings
 
+Snapshots are stored in a separate bucket from broker segments by default.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_BUCKET` | cluster S3 bucket | S3 bucket for etcd snapshots |
-| `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_PREFIX` | `etcd-snapshots/` | S3 key prefix for snapshots |
+| `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_BUCKET` | `kafscale-etcd-<namespace>-<cluster>` | S3 bucket for etcd snapshots |
+| `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_PREFIX` | `etcd-snapshots` | S3 key prefix for snapshots |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_SCHEDULE` | `0 * * * *` | Cron schedule for snapshots (hourly) |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_S3_ENDPOINT` | | S3 endpoint override for snapshots |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_STALE_AFTER_SEC` | `7200` | Snapshot staleness alert threshold (2 hours) |
-| `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_ETCDCTL_IMAGE` | | etcdctl image for snapshots |
-| `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_IMAGE` | | AWS CLI image for uploads |
+| `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_ETCDCTL_IMAGE` | `kubesphere/etcd:3.6.4-0` | etcdctl image for snapshots |
+| `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_IMAGE` | `amazon/aws-cli:2.15.0` | AWS CLI image for uploads |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_CREATE_BUCKET` | `0` | Auto-create snapshot bucket (`1` to enable) |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_PROTECT_BUCKET` | `0` | Enable versioning + public access block (`1` to enable) |
 | `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_SKIP_PREFLIGHT` | `0` | Skip S3 write preflight check (`1` to enable) |
