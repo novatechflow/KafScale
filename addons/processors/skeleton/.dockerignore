@@ -1,0 +1,14 @@
+# Keep Docker build context small for the skeleton processor image.
+.build
+.gocache
+.git
+.idea
+.vscode
+bin
+dist
+tmp
+**/.DS_Store
+**/*.log
+**/*.swp
+**/*_test.go
+**/node_modules
