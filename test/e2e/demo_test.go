@@ -126,7 +126,14 @@ func TestDemoStack(t *testing.T) {
 			Password: consolePass,
 		},
 	}
-	consoleOpts.Metrics = consolepkg.NewPromMetricsClient(fmt.Sprintf("http://%s/metrics", metricsAddr))
+	brokerMetricsURL := fmt.Sprintf("http://%s/metrics", metricsAddr)
+	operatorMetricsURL := strings.TrimSpace(os.Getenv("KAFSCALE_CONSOLE_OPERATOR_METRICS_URL"))
+	brokerProvider := consolepkg.NewPromMetricsClient(brokerMetricsURL)
+	if operatorMetricsURL != "" {
+		consoleOpts.Metrics = consolepkg.NewCompositeMetricsProvider(brokerProvider, operatorMetricsURL)
+	} else {
+		consoleOpts.Metrics = brokerProvider
+	}
 	if err := consolepkg.StartServer(demoCtx, consoleAddr, consoleOpts); err != nil {
 		t.Fatalf("start console: %v", err)
 	}

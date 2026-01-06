@@ -195,6 +195,24 @@ func TestInMemoryStoreConsumerGroups(t *testing.T) {
 	}
 }
 
+func TestInMemoryStoreConsumerOffsets(t *testing.T) {
+	store := NewInMemoryStore(ClusterMetadata{})
+	ctx := context.Background()
+	if err := store.CommitConsumerOffset(ctx, "group-1", "orders", 0, 12, "meta"); err != nil {
+		t.Fatalf("CommitConsumerOffset: %v", err)
+	}
+	if err := store.CommitConsumerOffset(ctx, "group-1", "orders", 1, 42, ""); err != nil {
+		t.Fatalf("CommitConsumerOffset: %v", err)
+	}
+	offsets, err := store.ListConsumerOffsets(ctx)
+	if err != nil {
+		t.Fatalf("ListConsumerOffsets: %v", err)
+	}
+	if len(offsets) != 2 {
+		t.Fatalf("expected 2 offsets got %d", len(offsets))
+	}
+}
+
 func TestInMemoryStoreCreateDeleteTopic(t *testing.T) {
 	store := NewInMemoryStore(ClusterMetadata{
 		Brokers: []protocol.MetadataBroker{{NodeID: 1}},

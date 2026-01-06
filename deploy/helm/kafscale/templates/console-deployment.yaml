@@ -72,6 +72,13 @@ spec:
             - name: KAFSCALE_CONSOLE_BROKER_METRICS_URL
               value: "{{ .Values.console.metrics.brokerMetricsURL }}"
 {{- end }}
+{{- if .Values.console.metrics.operatorMetricsURL }}
+            - name: KAFSCALE_CONSOLE_OPERATOR_METRICS_URL
+              value: "{{ .Values.console.metrics.operatorMetricsURL }}"
+{{- else if .Values.operator.metrics.enabled }}
+            - name: KAFSCALE_CONSOLE_OPERATOR_METRICS_URL
+              value: "{{ printf "http://%s-metrics.%s.svc.cluster.local:%d/metrics" (include "kafscale.componentName" (dict "root" . "component" "operator")) .Release.Namespace .Values.operator.metrics.port }}"
+{{- end }}
           ports:
             - name: http
               containerPort: 8080

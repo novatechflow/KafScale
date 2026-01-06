@@ -140,3 +140,19 @@ func TestKeyBuilders(t *testing.T) {
 		t.Fatalf("unexpected assignment key: %s", got)
 	}
 }
+
+func TestParseConsumerOffsetKey(t *testing.T) {
+	group, topic, partition, ok := ParseConsumerOffsetKey("/kafscale/consumers/group-1/offsets/orders/4")
+	if !ok {
+		t.Fatalf("expected key to parse")
+	}
+	if group != "group-1" || topic != "orders" || partition != 4 {
+		t.Fatalf("unexpected parsed key: %s %s %d", group, topic, partition)
+	}
+	if _, _, _, ok := ParseConsumerOffsetKey("/kafscale/consumers/group-1/metadata"); ok {
+		t.Fatalf("expected metadata key to be rejected")
+	}
+	if _, _, _, ok := ParseConsumerOffsetKey("/kafscale/consumers/group-1/offsets/orders/not-a-number"); ok {
+		t.Fatalf("expected invalid partition to be rejected")
+	}
+}
