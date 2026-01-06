@@ -1,4 +1,4 @@
-// Copyright 2025 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
+// Copyright 2025, 2026 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
 // This project is supported and financed by Scalytics, Inc. (www.scalytics.io).
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +75,10 @@ type handler struct {
 	traceKafka           bool
 	produceRate          *throughputTracker
 	fetchRate            *throughputTracker
+	produceLatency       *histogram
+	consumerLag          *lagMetrics
+	startTime            time.Time
+	cpuTracker           *cpuTracker
 	cacheSize            int
 	readAhead            int
 	segmentBytes         int
@@ -429,6 +433,13 @@ func (h *handler) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "# HELP kafscale_fetch_rps Broker fetch throughput measured over the sliding window.")
 	fmt.Fprintln(w, "# TYPE kafscale_fetch_rps gauge")
 	fmt.Fprintf(w, "kafscale_fetch_rps %f\n", h.fetchRate.rate())
+	if h.produceLatency != nil {
+		h.produceLatency.WritePrometheus(w, "kafscale_produce_latency_ms", "Produce request latency in milliseconds.")
+	}
+	if h.consumerLag != nil {
+		h.consumerLag.WritePrometheus(w)
+	}
+	h.writeRuntimeMetrics(w)
 	h.adminMetrics.writePrometheus(w)
 }
 
@@ -439,6 +450,13 @@ func (h *handler) recordS3Op(op string, latency time.Duration, err error) {
 	h.s3Health.RecordOperation(op, latency, err)
 }
 
+func (h *handler) recordProduceLatency(latency time.Duration) {
+	if h.produceLatency == nil {
+		return
+	}
+	h.produceLatency.Observe(float64(latency.Milliseconds()))
+}
+
 func (h *handler) withAdminMetrics(apiKey int16, fn func() ([]byte, error)) ([]byte, error) {
 	start := time.Now()
 	payload, err := fn()
@@ -447,6 +465,10 @@ func (h *handler) withAdminMetrics(apiKey int16, fn func() ([]byte, error)) ([]b
 }
 
 func (h *handler) handleProduce(ctx context.Context, header *protocol.RequestHeader, req *protocol.ProduceRequest) ([]byte, error) {
+	start := time.Now()
+	defer func() {
+		h.recordProduceLatency(time.Since(start))
+	}()
 	topicResponses := make([]protocol.ProduceTopicResponse, 0, len(req.Topics))
 	now := time.Now().UnixMilli()
 	var producedMessages int64
@@ -1439,6 +1461,8 @@ func newHandler(store metadata.Store, s3Client storage.S3Client, brokerInfo prot
 	segmentBytes := parseEnvInt("KAFSCALE_SEGMENT_BYTES", 4<<20)
 	flushInterval := time.Duration(parseEnvInt("KAFSCALE_FLUSH_INTERVAL_MS", 500)) * time.Millisecond
 	flushOnAck := parseEnvBool("KAFSCALE_PRODUCE_SYNC_FLUSH", true)
+	produceLatencyBuckets := []float64{1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000}
+	consumerLagBuckets := []float64{1, 10, 100, 1000, 5000, 10000, 50000, 100000, 500000, 1000000}
 	if autoPartitions < 1 {
 		autoPartitions = 1
 	}
@@ -1471,6 +1495,10 @@ func newHandler(store metadata.Store, s3Client storage.S3Client, brokerInfo prot
 		traceKafka:           traceKafka,
 		produceRate:          newThroughputTracker(throughputWindow),
 		fetchRate:            newThroughputTracker(throughputWindow),
+		produceLatency:       newHistogram(produceLatencyBuckets),
+		consumerLag:          newLagMetrics(consumerLagBuckets),
+		startTime:            time.Now(),
+		cpuTracker:           newCPUTracker(),
 		cacheSize:            cacheSize,
 		readAhead:            readAhead,
 		segmentBytes:         segmentBytes,
@@ -1537,6 +1565,7 @@ func main() {
 		logger.Error("startup checks failed", "error", err)
 		os.Exit(1)
 	}
+	handler.startConsumerLagSampler(ctx)
 	metricsAddr := envOrDefault("KAFSCALE_METRICS_ADDR", defaultMetricsAddr)
 	controlAddr := envOrDefault("KAFSCALE_CONTROL_ADDR", defaultControlAddr)
 	startMetricsServer(ctx, metricsAddr, handler, logger)

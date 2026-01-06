@@ -1,4 +1,4 @@
-// Copyright 2025 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
+// Copyright 2025, 2026 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
 // This project is supported and financed by Scalytics, Inc. (www.scalytics.io).
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -188,6 +188,36 @@ func (s *EtcdStore) FetchConsumerOffset(ctx context.Context, group, topic string
 		return 0, "", err
 	}
 	return rec.Offset, rec.Metadata, nil
+}
+
+// ListConsumerOffsets returns all committed offsets stored in etcd.
+func (s *EtcdStore) ListConsumerOffsets(ctx context.Context) ([]ConsumerOffset, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	resp, err := s.client.Get(ctx, ConsumerGroupPrefix(), clientv3.WithPrefix())
+	if err != nil {
+		s.recordEtcdResult(err)
+		return nil, err
+	}
+	s.recordEtcdResult(nil)
+	offsets := make([]ConsumerOffset, 0, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		group, topic, partition, ok := ParseConsumerOffsetKey(string(kv.Key))
+		if !ok {
+			continue
+		}
+		var rec consumerOffsetRecord
+		if err := json.Unmarshal(kv.Value, &rec); err != nil {
+			return nil, err
+		}
+		offsets = append(offsets, ConsumerOffset{
+			Group:     group,
+			Topic:     topic,
+			Partition: partition,
+			Offset:    rec.Offset,
+		})
+	}
+	return offsets, nil
 }
 
 // PutConsumerGroup persists consumer group metadata in etcd.

@@ -1,4 +1,4 @@
-// Copyright 2025 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
+// Copyright 2025, 2026 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
 // This project is supported and financed by Scalytics, Inc. (www.scalytics.io).
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,7 @@ func TestBuildMetadataStoreUsesEtcdEnv(t *testing.T) {
 
 func TestBuildMetricsProvider(t *testing.T) {
 	t.Setenv("KAFSCALE_CONSOLE_BROKER_METRICS_URL", "")
+	t.Setenv("KAFSCALE_CONSOLE_OPERATOR_METRICS_URL", "")
 	if got := buildMetricsProvider(nil); got != nil {
 		t.Fatalf("expected nil metrics provider when env unset")
 	}
@@ -58,6 +59,12 @@ func TestBuildMetricsProvider(t *testing.T) {
 	t.Setenv("KAFSCALE_CONSOLE_BROKER_METRICS_URL", "http://127.0.0.1:9093/metrics")
 	if got := buildMetricsProvider(nil); got == nil {
 		t.Fatalf("expected metrics provider when env set")
+	}
+
+	t.Setenv("KAFSCALE_CONSOLE_BROKER_METRICS_URL", "")
+	t.Setenv("KAFSCALE_CONSOLE_OPERATOR_METRICS_URL", "http://127.0.0.1:8080/metrics")
+	if got := buildMetricsProvider(nil); got == nil {
+		t.Fatalf("expected metrics provider when operator metrics env set")
 	}
 }
 

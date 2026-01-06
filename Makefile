@@ -52,6 +52,7 @@ ifndef KAFSCALE_KIND_KUBECONFIG
 KAFSCALE_KIND_KUBECONFIG := $(shell mktemp -t kafscale-kind-kubeconfig.XXXXXX 2>/dev/null || mktemp)
 endif
 KAFSCALE_DEMO_NAMESPACE ?= kafscale-demo
+KAFSCALE_CONSOLE_OPERATOR_METRICS_URL ?=
 KAFSCALE_UI_USERNAME ?= kafscaleadmin
 KAFSCALE_UI_PASSWORD ?= kafscale
 KAFSCALE_DEMO_BROKER_REPLICAS ?= 2
@@ -369,6 +370,7 @@ demo-platform-bootstrap: docker-build ## Bootstrap a full platform demo on kind 
 	  --set console.auth.password=$(KAFSCALE_UI_PASSWORD) \
 	  --set console.etcdEndpoints[0]=http://kafscale-etcd-client.$(KAFSCALE_DEMO_NAMESPACE).svc.cluster.local:2379 \
 	  --set console.metrics.brokerMetricsURL=http://kafscale-broker.$(KAFSCALE_DEMO_NAMESPACE).svc.cluster.local:9093/metrics \
+	  --set console.metrics.operatorMetricsURL=http://kafscale-operator-metrics.$(KAFSCALE_DEMO_NAMESPACE).svc.cluster.local:8080/metrics \
 	  --set operator.etcdEndpoints[0]= \
 	  $$( [ "$(KAFSCALE_DEMO_PROXY)" = "1" ] && echo "--set proxy.enabled=true --set proxy.image.repository=$$PROXY_REPO --set proxy.image.tag=$$PROXY_TAG --set proxy.etcdEndpoints[0]=http://kafscale-etcd-client.$(KAFSCALE_DEMO_NAMESPACE).svc.cluster.local:2379 --set proxy.advertisedHost=127.0.0.1 --set proxy.advertisedPort=39092 --set proxy.service.type=LoadBalancer --set proxy.service.port=9092" )
 	@KUBECONFIG=$(KAFSCALE_KIND_KUBECONFIG) bash -c 'set -euo pipefail; \
@@ -504,6 +506,7 @@ demo: release-broker-ports ensure-minio ## Launch the broker + console demo stac
 	KAFSCALE_UI_USERNAME=kafscaleadmin \
 	KAFSCALE_UI_PASSWORD=kafscale \
 	KAFSCALE_CONSOLE_BROKER_METRICS_URL=http://127.0.0.1:39093/metrics \
+	KAFSCALE_CONSOLE_OPERATOR_METRICS_URL=http://127.0.0.1:8080/metrics \
 	KAFSCALE_S3_BUCKET=$(MINIO_BUCKET) \
 	KAFSCALE_S3_REGION=$(MINIO_REGION) \
 	KAFSCALE_S3_NAMESPACE=default \

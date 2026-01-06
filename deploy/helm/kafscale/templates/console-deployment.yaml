@@ -1,4 +1,4 @@
-# Copyright 2025 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
+# Copyright 2025, 2026 Alexander Alten (novatechflow), NovaTechflow (novatechflow.com).
 # This project is supported and financed by Scalytics, Inc. (www.scalytics.io).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,6 +71,13 @@ spec:
 {{- if .Values.console.metrics.brokerMetricsURL }}
             - name: KAFSCALE_CONSOLE_BROKER_METRICS_URL
               value: "{{ .Values.console.metrics.brokerMetricsURL }}"
+{{- end }}
+{{- if .Values.console.metrics.operatorMetricsURL }}
+            - name: KAFSCALE_CONSOLE_OPERATOR_METRICS_URL
+              value: "{{ .Values.console.metrics.operatorMetricsURL }}"
+{{- else if .Values.operator.metrics.enabled }}
+            - name: KAFSCALE_CONSOLE_OPERATOR_METRICS_URL
+              value: "{{ printf "http://%s-metrics.%s.svc.cluster.local:%d/metrics" (include "kafscale.componentName" (dict "root" . "component" "operator")) .Release.Namespace .Values.operator.metrics.port }}"
 {{- end }}
           ports:
             - name: http

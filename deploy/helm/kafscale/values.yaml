@@ -80,6 +80,7 @@ console:
     password: ""
   metrics:
     brokerMetricsURL: ""
+    operatorMetricsURL: ""
   podAnnotations: {}
   resources: {}
   nodeSelector: {}
