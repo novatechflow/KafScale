@@ -37,6 +37,17 @@ func TestParseIndex(t *testing.T) {
 	}
 }
 
+func TestParseIndexInvalid(t *testing.T) {
+	if _, err := parseIndex([]byte("bad")); err == nil {
+		t.Fatalf("expected error for invalid index")
+	}
+	data := make([]byte, 16)
+	copy(data[0:4], []byte("BAD!"))
+	if _, err := parseIndex(data); err == nil {
+		t.Fatalf("expected error for invalid magic")
+	}
+}
+
 func TestDecodeSegmentInvalidMagic(t *testing.T) {
 	_, err := decodeSegment([]byte("bad"), "orders", 0)
 	if err == nil {
@@ -58,6 +69,16 @@ func TestDecodeRecordBatch(t *testing.T) {
 	}
 	if records[0].Offset != 5 || string(records[0].Key) != "k" || string(records[0].Value) != "v" {
 		t.Fatalf("unexpected record: %+v", records[0])
+	}
+}
+
+func TestDecodeBatchCompressed(t *testing.T) {
+	record := buildRecord(0, 0, []byte("k"), []byte("v"))
+	batch := buildBatch(5, 1000, record)
+	batch[21] = 0
+	batch[22] = 1
+	if _, err := decodeBatchRecords(batch, "orders", 0); err == nil {
+		t.Fatalf("expected error for compressed batch")
 	}
 }
 

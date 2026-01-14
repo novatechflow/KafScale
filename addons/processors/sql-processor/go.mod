@@ -1,4 +1,4 @@
-module github.com/novatechflow/kafscale/addons/processors/sql-processor
+module github.com/kafscale/platform/addons/processors/sql-processor
 
 go 1.22
 

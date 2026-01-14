@@ -45,6 +45,9 @@ func TestParseSelectWithFilters(t *testing.T) {
 	if q.Type != QuerySelect || q.Topic != "orders" {
 		t.Fatalf("unexpected query: %+v", q)
 	}
+	if len(q.Select) != 1 || q.Select[0].Kind != SelectColumnField || q.Select[0].Column != "_offset" {
+		t.Fatalf("unexpected select columns: %+v", q.Select)
+	}
 	if q.Partition == nil || *q.Partition != 2 {
 		t.Fatalf("expected partition filter, got %+v", q.Partition)
 	}
@@ -67,15 +70,54 @@ func TestParseSelectScanFull(t *testing.T) {
 }
 
 func TestParseSelectJoin(t *testing.T) {
-	q, err := Parse("SELECT * FROM orders JOIN payments WITHIN 10m LAST 1h;")
+	q, err := Parse("SELECT * FROM orders o JOIN payments p ON o._key = p._key WITHIN 10m LAST 1h;")
 	if err != nil {
 		t.Fatalf("expected select join, got error: %v", err)
 	}
 	if q.JoinTopic != "payments" || q.JoinType != "inner" {
 		t.Fatalf("unexpected join: %+v", q)
 	}
+	if q.JoinOn == nil {
+		t.Fatalf("expected join condition")
+	}
 	if q.TimeWindow != "10m" || q.Last != "1h" {
 		t.Fatalf("unexpected time bounds: %+v", q)
+	}
+}
+
+func TestParseOrderBy(t *testing.T) {
+	q, err := Parse("SELECT * FROM orders ORDER BY _ts DESC LIMIT 10;")
+	if err != nil {
+		t.Fatalf("expected select, got error: %v", err)
+	}
+	if q.OrderBy != "_ts" || !q.OrderDesc {
+		t.Fatalf("unexpected order by: %+v", q)
+	}
+}
+
+func TestParseGroupByAggregate(t *testing.T) {
+	q, err := Parse("SELECT _partition, COUNT(*) FROM orders GROUP BY _partition;")
+	if err != nil {
+		t.Fatalf("expected select, got error: %v", err)
+	}
+	if len(q.GroupBy) != 1 || q.GroupBy[0] != "_partition" {
+		t.Fatalf("unexpected group by: %+v", q.GroupBy)
+	}
+	if len(q.Select) != 2 {
+		t.Fatalf("unexpected select columns: %+v", q.Select)
+	}
+}
+
+func TestParseJSONValue(t *testing.T) {
+	q, err := Parse("SELECT json_value(_value, '$.status') AS status FROM orders;")
+	if err != nil {
+		t.Fatalf("expected select, got error: %v", err)
+	}
+	if len(q.Select) != 1 || q.Select[0].Kind != SelectColumnJSONValue {
+		t.Fatalf("unexpected select columns: %+v", q.Select)
+	}
+	if q.Select[0].Alias != "status" {
+		t.Fatalf("unexpected alias: %+v", q.Select[0])
 	}
 }
 

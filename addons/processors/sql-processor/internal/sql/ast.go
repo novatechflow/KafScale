@@ -28,19 +28,72 @@ const (
 type Query struct {
 	Type QueryType
 
-	Topic     string
-	JoinTopic string
-	JoinType  string
+	Topic      string
+	TopicAlias string
+	JoinTopic  string
+	JoinAlias  string
+	JoinType   string
+	JoinOn     *JoinCondition
 
-	Columns []string
-	Limit   string
+	Select    []SelectColumn
+	GroupBy   []string
+	OrderBy   string
+	OrderDesc bool
+	Limit     string
 
 	Partition *int32
 	OffsetMin *int64
 	OffsetMax *int64
+	TsMin     *int64
+	TsMax     *int64
 
 	TimeWindow string
 	Last       string
 	Tail       string
 	ScanFull   bool
+}
+
+type SelectColumnKind string
+
+const (
+	SelectColumnUnknown   SelectColumnKind = "unknown"
+	SelectColumnStar      SelectColumnKind = "star"
+	SelectColumnField     SelectColumnKind = "field"
+	SelectColumnJSONValue SelectColumnKind = "json_value"
+	SelectColumnAggregate SelectColumnKind = "aggregate"
+)
+
+type SelectColumn struct {
+	Raw    string
+	Alias  string
+	Kind   SelectColumnKind
+	Source string
+
+	Column   string
+	JSONPath string
+
+	AggFunc     string
+	AggColumn   string
+	AggJSONPath string
+	AggStar     bool
+	AggSource   string
+}
+
+type JoinExprKind string
+
+const (
+	JoinExprKey  JoinExprKind = "key"
+	JoinExprJSON JoinExprKind = "json"
+)
+
+type JoinCondition struct {
+	Left  JoinExpr
+	Right JoinExpr
+}
+
+type JoinExpr struct {
+	Kind     JoinExprKind
+	Source   string
+	Side     string
+	JSONPath string
 }

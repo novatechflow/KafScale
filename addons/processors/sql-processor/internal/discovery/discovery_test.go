@@ -32,6 +32,18 @@ func TestParseSegmentKey(t *testing.T) {
 	}
 }
 
+func TestParseSegmentKeyInvalid(t *testing.T) {
+	if _, _, ok := parseSegmentKey("prod/", "prod/orders/x/segment-000.kfs"); ok {
+		t.Fatalf("expected invalid partition")
+	}
+	if _, _, ok := parseSegmentKey("prod/", "prod/orders/3/segment-abc.kfs"); ok {
+		t.Fatalf("expected invalid base offset")
+	}
+	if _, _, ok := parseSegmentKey("prod/", "prod/orders/3/segment-00000000000000000001.tmp"); ok {
+		t.Fatalf("expected unsupported extension")
+	}
+}
+
 func TestNormalizePrefix(t *testing.T) {
 	if normalizePrefix("") != "" {
 		t.Fatalf("expected empty prefix")

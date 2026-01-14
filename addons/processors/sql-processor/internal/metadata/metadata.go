@@ -30,8 +30,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/config"
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/metrics"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/config"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/metrics"
 )
 
 type Resolver interface {

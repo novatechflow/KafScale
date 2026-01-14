@@ -31,12 +31,12 @@ import (
 
 	"github.com/jackc/pgproto3/v2"
 
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/config"
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/decoder"
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/discovery"
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/metadata"
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/metrics"
-	kafsql "github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/sql"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/config"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/decoder"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/discovery"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/metadata"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/metrics"
+	kafsql "github.com/kafscale/platform/addons/processors/sql-processor/internal/sql"
 )
 
 type Server struct {
@@ -262,6 +262,77 @@ type queryResult struct {
 	rows     int
 	segments int
 	bytes    int64
+}
+
+type columnKind int
+
+const (
+	columnImplicit columnKind = iota
+	columnSchema
+	columnJSON
+)
+
+type resolvedColumn struct {
+	Name     string
+	Kind     columnKind
+	Source   string
+	Column   string
+	JSONPath string
+	Schema   config.SchemaColumn
+}
+
+type outputKind int
+
+const (
+	outputGroup outputKind = iota
+	outputAggregate
+)
+
+type outputColumn struct {
+	Name     string
+	Kind     outputKind
+	GroupIdx int
+	AggIdx   int
+	DataType uint32
+}
+
+type aggArgKind int
+
+const (
+	aggArgStar aggArgKind = iota
+	aggArgColumn
+)
+
+type aggArg struct {
+	Kind   aggArgKind
+	Column resolvedColumn
+}
+
+type aggSpec struct {
+	Func string
+	Name string
+	Arg  aggArg
+}
+
+type aggState struct {
+	Func   string
+	Count  int64
+	Sum    float64
+	HasSum bool
+	MinSet bool
+	MinNum float64
+	MinTS  int64
+	MinStr string
+	MaxSet bool
+	MaxNum float64
+	MaxTS  int64
+	MaxStr string
+	Kind   string
+}
+
+type groupState struct {
+	Values [][]byte
+	Aggs   []aggState
 }
 
 func (s *Server) executeQuery(ctx context.Context, backend *pgproto3.Backend, parsed kafsql.Query) (queryResult, error) {
@@ -638,7 +709,7 @@ func (s *Server) handleSelect(ctx context.Context, backend *pgproto3.Backend, pa
 		return queryResult{}, errors.New("select requires a topic")
 	}
 
-	if s.cfg.Query.RequireTimeBound && !parsed.ScanFull && parsed.Last == "" && parsed.Tail == "" {
+	if s.cfg.Query.RequireTimeBound && !parsed.ScanFull && parsed.Last == "" && parsed.Tail == "" && parsed.TsMin == nil && parsed.TsMax == nil {
 		metrics.QueryUnboundedRejected.Inc()
 		return queryResult{}, errors.New("unbounded query: add LAST, TAIL, or SCAN FULL")
 	}
@@ -651,25 +722,26 @@ func (s *Server) handleSelect(ctx context.Context, backend *pgproto3.Backend, pa
 		}
 		limit = value
 	}
+	tailCount := 0
+	if parsed.Tail != "" {
+		value, err := parseLimit(parsed.Tail)
+		if err != nil {
+			return queryResult{}, err
+		}
+		tailCount = value
+		limit = value
+	}
 	if limit <= 0 {
 		limit = s.cfg.Query.DefaultLimit
 	}
 	if parsed.ScanFull && limit > s.cfg.Query.MaxUnbounded {
 		return queryResult{}, fmt.Errorf("scan full limit exceeds max_unbounded_scan (%d)", s.cfg.Query.MaxUnbounded)
 	}
-
-	columns := parsed.Columns
-	if len(columns) == 0 {
-		columns = []string{"*"}
+	if parsed.OrderBy != "" && parsed.OrderBy != "_ts" {
+		return queryResult{}, errors.New("order by supports _ts only")
 	}
-	resolvedCols, schemaCols, err := s.resolveColumns(parsed.Topic, columns)
-	if err != nil {
-		return queryResult{}, err
-	}
-
-	fields := buildRowDescription(resolvedCols, schemaCols)
-	if err := backend.Send(&pgproto3.RowDescription{Fields: fields}); err != nil {
-		return queryResult{}, err
+	if parsed.OrderBy != "" && tailCount > 0 {
+		return queryResult{}, errors.New("tail cannot be combined with order by")
 	}
 
 	lister, err := s.getLister()
@@ -686,7 +758,365 @@ func (s *Server) handleSelect(ctx context.Context, backend *pgproto3.Backend, pa
 		return queryResult{}, err
 	}
 
+	timeMin := parsed.TsMin
+	timeMax := parsed.TsMax
+	if parsed.Last != "" {
+		window, err := parseDuration(parsed.Last)
+		if err != nil {
+			return queryResult{}, err
+		}
+		now := time.Now().UTC().UnixMilli()
+		start := now - window.Milliseconds()
+		timeMin = maxInt64Ptr(timeMin, start)
+		if timeMax == nil {
+			timeMax = &now
+		}
+	}
+	if timeMin != nil && timeMax != nil && *timeMax < *timeMin {
+		return queryResult{}, errors.New("time window is invalid")
+	}
+
+	if hasAggregates(parsed.Select) {
+		if parsed.OrderBy != "" {
+			return queryResult{}, errors.New("order by not supported with aggregates")
+		}
+		if parsed.Tail != "" {
+			return queryResult{}, errors.New("tail not supported with aggregates")
+		}
+		return s.handleAggregateSelect(ctx, backend, parsed, segments, timeMin, timeMax, limit)
+	}
+
+	resolvedCols, err := s.resolveSelectColumns(parsed.Topic, parsed.Select)
+	if err != nil {
+		return queryResult{}, err
+	}
+	fields := buildRowDescription(resolvedCols)
+	if err := backend.Send(&pgproto3.RowDescription{Fields: fields}); err != nil {
+		return queryResult{}, err
+	}
+
 	sent := 0
+	segmentsScanned := 0
+	bytesScanned := int64(0)
+	var rows []rowResult
+	var tailRows []rowResult
+	for _, segment := range segments {
+		if segment.Topic != parsed.Topic {
+			continue
+		}
+		if parsed.Partition != nil && segment.Partition != *parsed.Partition {
+			continue
+		}
+		segmentsScanned++
+		records, err := dec.Decode(ctx, segment.SegmentKey, segment.IndexKey, segment.Topic, segment.Partition)
+		if err != nil {
+			return queryResult{}, err
+		}
+		for _, record := range records {
+			if timeMin != nil && record.Timestamp < *timeMin {
+				continue
+			}
+			if timeMax != nil && record.Timestamp > *timeMax {
+				continue
+			}
+			if parsed.OffsetMin != nil && record.Offset < *parsed.OffsetMin {
+				continue
+			}
+			if parsed.OffsetMax != nil && record.Offset > *parsed.OffsetMax {
+				continue
+			}
+			bytesScanned += int64(len(record.Key) + len(record.Value))
+			row := rowResult{
+				values: buildRowValues(resolvedCols, rowContext{left: record, leftSeg: segment.SegmentKey}),
+				ts:     record.Timestamp,
+			}
+			if parsed.OrderBy != "" {
+				rows = append(rows, row)
+				continue
+			}
+			if tailCount > 0 {
+				tailRows = appendTailRow(tailRows, row, tailCount)
+				continue
+			}
+			if err := backend.Send(&pgproto3.DataRow{Values: row.values}); err != nil {
+				return queryResult{}, err
+			}
+			sent++
+			if sent >= limit {
+				_ = backend.Send(&pgproto3.CommandComplete{CommandTag: commandTag(sent)})
+				return queryResult{rows: sent, segments: segmentsScanned, bytes: bytesScanned}, nil
+			}
+		}
+	}
+
+	if parsed.OrderBy != "" {
+		sort.Slice(rows, func(i, j int) bool {
+			if parsed.OrderDesc {
+				return rows[i].ts > rows[j].ts
+			}
+			return rows[i].ts < rows[j].ts
+		})
+		if limit > 0 && len(rows) > limit {
+			rows = rows[:limit]
+		}
+		for _, row := range rows {
+			if err := backend.Send(&pgproto3.DataRow{Values: row.values}); err != nil {
+				return queryResult{}, err
+			}
+			sent++
+		}
+	} else if tailCount > 0 {
+		for _, row := range tailRows {
+			if err := backend.Send(&pgproto3.DataRow{Values: row.values}); err != nil {
+				return queryResult{}, err
+			}
+			sent++
+		}
+	}
+
+	_ = backend.Send(&pgproto3.CommandComplete{CommandTag: commandTag(sent)})
+	return queryResult{rows: sent, segments: segmentsScanned, bytes: bytesScanned}, nil
+}
+
+func (s *Server) resolveSelectColumns(topic string, cols []kafsql.SelectColumn) ([]resolvedColumn, error) {
+	if len(cols) == 0 {
+		cols = []kafsql.SelectColumn{{Kind: kafsql.SelectColumnStar, Raw: "*"}}
+	}
+	for _, col := range cols {
+		if col.Kind == kafsql.SelectColumnAggregate {
+			return nil, fmt.Errorf("aggregate columns require group by")
+		}
+	}
+
+	schemaCols := s.schemaColumnsForTopic(topic)
+	schemaMap := s.schemaColumnMapForTopic(topic)
+	if len(cols) == 1 && cols[0].Kind == kafsql.SelectColumnStar {
+		out := []resolvedColumn{
+			{Name: "_topic", Kind: columnImplicit, Column: "_topic"},
+			{Name: "_partition", Kind: columnImplicit, Column: "_partition"},
+			{Name: "_offset", Kind: columnImplicit, Column: "_offset"},
+			{Name: "_ts", Kind: columnImplicit, Column: "_ts"},
+			{Name: "_key", Kind: columnImplicit, Column: "_key"},
+			{Name: "_value", Kind: columnImplicit, Column: "_value"},
+			{Name: "_headers", Kind: columnImplicit, Column: "_headers"},
+			{Name: "_segment", Kind: columnImplicit, Column: "_segment"},
+		}
+		for _, col := range schemaCols {
+			name := strings.ToLower(col.Name)
+			out = append(out, resolvedColumn{Name: name, Kind: columnSchema, Column: name, Schema: col})
+		}
+		return out, nil
+	}
+
+	out := make([]resolvedColumn, 0, len(cols))
+	for _, col := range cols {
+		switch col.Kind {
+		case kafsql.SelectColumnStar:
+			return nil, fmt.Errorf("select * cannot be combined with other columns")
+		case kafsql.SelectColumnJSONValue:
+			name := col.Alias
+			if name == "" {
+				name = "json_value"
+			}
+			out = append(out, resolvedColumn{Name: name, Kind: columnJSON, JSONPath: col.JSONPath})
+		case kafsql.SelectColumnField:
+			resolved, err := s.resolveColumnByName(topic, col.Column, schemaMap)
+			if err != nil {
+				return nil, err
+			}
+			if col.Alias != "" {
+				resolved.Name = col.Alias
+			}
+			out = append(out, resolved)
+		default:
+			return nil, fmt.Errorf("unsupported select column")
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) resolveColumnByName(topic string, name string, schemaMap map[string]config.SchemaColumn) (resolvedColumn, error) {
+	switch name {
+	case "_topic", "_partition", "_offset", "_ts", "_key", "_value", "_headers", "_segment":
+		return resolvedColumn{Name: name, Kind: columnImplicit, Column: name}, nil
+	default:
+		if schema, ok := schemaMap[name]; ok {
+			return resolvedColumn{Name: name, Kind: columnSchema, Column: name, Schema: schema}, nil
+		}
+	}
+	return resolvedColumn{}, fmt.Errorf("unknown column %q", name)
+}
+
+func buildRowDescription(cols []resolvedColumn) []pgproto3.FieldDescription {
+	fields := make([]pgproto3.FieldDescription, 0, len(cols))
+	for _, col := range cols {
+		oid := columnTypeOID(col)
+		fields = append(fields, pgproto3.FieldDescription{Name: []byte(col.Name), DataTypeOID: oid, DataTypeSize: -1, TypeModifier: -1, Format: 0})
+	}
+	return fields
+}
+
+type rowContext struct {
+	left     decoder.Record
+	right    *decoder.Record
+	leftSeg  string
+	rightSeg string
+}
+
+func buildRowValues(cols []resolvedColumn, ctx rowContext) [][]byte {
+	values := make([][]byte, 0, len(cols))
+	for _, col := range cols {
+		values = append(values, columnValue(ctx, col))
+	}
+	return values
+}
+
+type rowResult struct {
+	values [][]byte
+	ts     int64
+}
+
+func appendTailRow(rows []rowResult, row rowResult, limit int) []rowResult {
+	if limit <= 0 {
+		return rows
+	}
+	if len(rows) < limit {
+		return append(rows, row)
+	}
+	copy(rows, rows[1:])
+	rows[len(rows)-1] = row
+	return rows
+}
+
+func columnTypeOID(col resolvedColumn) uint32 {
+	switch col.Kind {
+	case columnSchema:
+		return schemaTypeOID(col.Schema.Type)
+	case columnJSON:
+		return 25
+	default:
+		switch col.Column {
+		case "_partition":
+			return 23
+		case "_offset":
+			return 20
+		case "_ts":
+			return 1114
+		case "_key", "_value":
+			return 17
+		default:
+			return 25
+		}
+	}
+}
+
+func columnValue(ctx rowContext, col resolvedColumn) []byte {
+	record, seg, ok := selectRecord(ctx, col.Source)
+	if !ok {
+		return nil
+	}
+	switch col.Kind {
+	case columnSchema:
+		return schemaValue(record.Value, col.Schema, record.Topic)
+	case columnJSON:
+		return jsonValueBytes(record.Value, col.JSONPath)
+	default:
+		switch col.Column {
+		case "_topic":
+			return []byte(record.Topic)
+		case "_partition":
+			return []byte(itoa(int(record.Partition)))
+		case "_offset":
+			return []byte(itoa64(record.Offset))
+		case "_ts":
+			return []byte(formatTimestamp(record.Timestamp))
+		case "_key":
+			return encodeBytea(record.Key)
+		case "_value":
+			return encodeBytea(record.Value)
+		case "_headers":
+			return []byte(headersToJSON(record.Headers))
+		case "_segment":
+			return []byte(seg)
+		default:
+			return nil
+		}
+	}
+}
+
+func selectRecord(ctx rowContext, source string) (decoder.Record, string, bool) {
+	if source == "right" {
+		if ctx.right == nil {
+			return decoder.Record{}, "", false
+		}
+		return *ctx.right, ctx.rightSeg, true
+	}
+	return ctx.left, ctx.leftSeg, true
+}
+
+func jsonValueBytes(payload []byte, path string) []byte {
+	value, ok := jsonLookup(payload, path, "")
+	if !ok {
+		return nil
+	}
+	switch v := value.(type) {
+	case string:
+		return []byte(v)
+	case float64:
+		return []byte(strconv.FormatFloat(v, 'f', -1, 64))
+	case bool:
+		return []byte(strconv.FormatBool(v))
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		return data
+	}
+}
+
+func maxInt64Ptr(current *int64, value int64) *int64 {
+	if current == nil || value > *current {
+		return &value
+	}
+	return current
+}
+
+func hasAggregates(cols []kafsql.SelectColumn) bool {
+	for _, col := range cols {
+		if col.Kind == kafsql.SelectColumnAggregate {
+			return true
+		}
+	}
+	return false
+}
+
+type aggregatePlan struct {
+	groupCols []resolvedColumn
+	aggs      []aggSpec
+	outputs   []outputColumn
+}
+
+func (s *Server) handleAggregateSelect(ctx context.Context, backend *pgproto3.Backend, parsed kafsql.Query, segments []discovery.SegmentRef, timeMin *int64, timeMax *int64, limit int) (queryResult, error) {
+	plan, err := s.buildAggregatePlan(parsed)
+	if err != nil {
+		return queryResult{}, err
+	}
+
+	fields := make([]pgproto3.FieldDescription, 0, len(plan.outputs))
+	for _, out := range plan.outputs {
+		fields = append(fields, pgproto3.FieldDescription{Name: []byte(out.Name), DataTypeOID: out.DataType, DataTypeSize: -1, TypeModifier: -1, Format: 0})
+	}
+	if err := backend.Send(&pgproto3.RowDescription{Fields: fields}); err != nil {
+		return queryResult{}, err
+	}
+
+	dec, err := s.getDecoder()
+	if err != nil {
+		return queryResult{}, err
+	}
+
+	groups := make(map[string]*groupState)
 	segmentsScanned := 0
 	bytesScanned := int64(0)
 	for _, segment := range segments {
@@ -702,6 +1132,12 @@ func (s *Server) handleSelect(ctx context.Context, backend *pgproto3.Backend, pa
 			return queryResult{}, err
 		}
 		for _, record := range records {
+			if timeMin != nil && record.Timestamp < *timeMin {
+				continue
+			}
+			if timeMax != nil && record.Timestamp > *timeMax {
+				continue
+			}
 			if parsed.OffsetMin != nil && record.Offset < *parsed.OffsetMin {
 				continue
 			}
@@ -709,109 +1145,446 @@ func (s *Server) handleSelect(ctx context.Context, backend *pgproto3.Backend, pa
 				continue
 			}
 			bytesScanned += int64(len(record.Key) + len(record.Value))
-			values := buildRowValues(resolvedCols, record, segment.SegmentKey, schemaCols)
-			if err := backend.Send(&pgproto3.DataRow{Values: values}); err != nil {
-				return queryResult{}, err
+
+			groupVals := make([][]byte, len(plan.groupCols))
+			for i, col := range plan.groupCols {
+				groupVals[i] = columnValue(rowContext{left: record, leftSeg: segment.SegmentKey}, col)
 			}
-			sent++
-			if sent >= limit {
-				_ = backend.Send(&pgproto3.CommandComplete{CommandTag: commandTag(sent)})
-				return queryResult{rows: sent, segments: segmentsScanned, bytes: bytesScanned}, nil
+			groupKey := buildGroupKey(groupVals)
+			state := groups[groupKey]
+			if state == nil {
+				aggs := make([]aggState, len(plan.aggs))
+				for i, spec := range plan.aggs {
+					aggs[i] = aggState{Func: spec.Func}
+				}
+				state = &groupState{Values: groupVals, Aggs: aggs}
+				groups[groupKey] = state
+			}
+			rowCtx := rowContext{left: record, leftSeg: segment.SegmentKey}
+			for i, spec := range plan.aggs {
+				updateAgg(&state.Aggs[i], spec, rowCtx)
 			}
 		}
+	}
+
+	groupKeys := make([]string, 0, len(groups))
+	for key := range groups {
+		groupKeys = append(groupKeys, key)
+	}
+	sort.Strings(groupKeys)
+
+	sent := 0
+	for _, key := range groupKeys {
+		if limit > 0 && sent >= limit {
+			break
+		}
+		state := groups[key]
+		row := buildAggregateRow(plan, state)
+		if err := backend.Send(&pgproto3.DataRow{Values: row}); err != nil {
+			return queryResult{}, err
+		}
+		sent++
 	}
 
 	_ = backend.Send(&pgproto3.CommandComplete{CommandTag: commandTag(sent)})
 	return queryResult{rows: sent, segments: segmentsScanned, bytes: bytesScanned}, nil
 }
 
-func (s *Server) resolveColumns(topic string, cols []string) ([]string, map[string]config.SchemaColumn, error) {
-	schemaCols := s.schemaColumnMapForTopic(topic)
-	schemaList := s.schemaColumnsForTopic(topic)
-	if len(cols) == 1 && cols[0] == "*" {
-		out := []string{"_topic", "_partition", "_offset", "_ts", "_key", "_value", "_headers", "_segment"}
-		for _, col := range schemaList {
-			out = append(out, strings.ToLower(col.Name))
+func (s *Server) buildAggregatePlan(parsed kafsql.Query) (aggregatePlan, error) {
+	schemaMap := s.schemaColumnMapForTopic(parsed.Topic)
+	groupCols := make([]resolvedColumn, 0, len(parsed.GroupBy))
+	groupIndex := make(map[string]int, len(parsed.GroupBy))
+	for _, name := range parsed.GroupBy {
+		col, err := s.resolveColumnByName(parsed.Topic, name, schemaMap)
+		if err != nil {
+			return aggregatePlan{}, err
 		}
-		return out, schemaCols, nil
+		groupIndex[col.Name] = len(groupCols)
+		groupCols = append(groupCols, col)
 	}
-	out := make([]string, 0, len(cols))
-	for _, col := range cols {
-		switch col {
-		case "_topic", "_partition", "_offset", "_ts", "_key", "_value", "_headers", "_segment":
-			out = append(out, col)
-		default:
-			if _, ok := schemaCols[col]; ok {
-				out = append(out, col)
-				continue
+
+	hasAgg := false
+	outputs := make([]outputColumn, 0, len(parsed.Select))
+	aggs := make([]aggSpec, 0)
+	for _, sel := range parsed.Select {
+		switch sel.Kind {
+		case kafsql.SelectColumnAggregate:
+			hasAgg = true
+			spec, err := s.buildAggSpec(parsed.Topic, sel, schemaMap)
+			if err != nil {
+				return aggregatePlan{}, err
 			}
-			return nil, nil, fmt.Errorf("unknown column %q", col)
+			aggIdx := len(aggs)
+			aggs = append(aggs, spec)
+			name := sel.Alias
+			if name == "" {
+				name = spec.Name
+			}
+			outputs = append(outputs, outputColumn{
+				Name:     name,
+				Kind:     outputAggregate,
+				AggIdx:   aggIdx,
+				DataType: aggResultOID(spec),
+			})
+		case kafsql.SelectColumnField:
+			if len(parsed.GroupBy) == 0 {
+				return aggregatePlan{}, errors.New("non-aggregate column requires group by")
+			}
+			idx, ok := groupIndex[sel.Column]
+			if !ok {
+				return aggregatePlan{}, fmt.Errorf("column %q must appear in group by", sel.Column)
+			}
+			name := sel.Alias
+			if name == "" {
+				name = sel.Column
+			}
+			outputs = append(outputs, outputColumn{
+				Name:     name,
+				Kind:     outputGroup,
+				GroupIdx: idx,
+				DataType: columnTypeOID(groupCols[idx]),
+			})
+		case kafsql.SelectColumnJSONValue:
+			return aggregatePlan{}, errors.New("json_value is not supported in group by")
+		case kafsql.SelectColumnStar:
+			return aggregatePlan{}, errors.New("select * is not supported with aggregates")
+		default:
+			return aggregatePlan{}, errors.New("unsupported aggregate selection")
 		}
 	}
-	return out, schemaCols, nil
+
+	if !hasAgg {
+		return aggregatePlan{}, errors.New("aggregate query requires an aggregate function")
+	}
+	return aggregatePlan{groupCols: groupCols, aggs: aggs, outputs: outputs}, nil
 }
 
-func buildRowDescription(cols []string, schemaCols map[string]config.SchemaColumn) []pgproto3.FieldDescription {
-	fields := make([]pgproto3.FieldDescription, 0, len(cols))
-	for _, col := range cols {
-		switch col {
+func (s *Server) buildAggSpec(topic string, sel kafsql.SelectColumn, schemaMap map[string]config.SchemaColumn) (aggSpec, error) {
+	spec := aggSpec{Func: sel.AggFunc, Name: sel.Alias}
+	if sel.AggStar {
+		spec.Arg = aggArg{Kind: aggArgStar}
+		return spec, nil
+	}
+	if sel.AggJSONPath != "" {
+		spec.Arg = aggArg{
+			Kind: aggArgColumn,
+			Column: resolvedColumn{
+				Name:     "json_value",
+				Kind:     columnJSON,
+				JSONPath: sel.AggJSONPath,
+			},
+		}
+		if spec.Name == "" {
+			spec.Name = sel.AggFunc + "_json"
+		}
+		return spec, nil
+	}
+	col, err := s.resolveColumnByName(topic, sel.AggColumn, schemaMap)
+	if err != nil {
+		return aggSpec{}, err
+	}
+	spec.Arg = aggArg{Kind: aggArgColumn, Column: col}
+	if spec.Name == "" {
+		spec.Name = sel.AggFunc + "_" + sel.AggColumn
+	}
+	return spec, nil
+}
+
+func aggResultOID(spec aggSpec) uint32 {
+	switch spec.Func {
+	case "count":
+		return 20
+	case "sum", "avg":
+		return 701
+	case "min", "max":
+		if spec.Arg.Kind == aggArgColumn {
+			return columnTypeOID(spec.Arg.Column)
+		}
+		return 25
+	default:
+		return 25
+	}
+}
+
+func buildGroupKey(values [][]byte) string {
+	if len(values) == 0 {
+		return "all"
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			parts = append(parts, "<nil>")
+		} else {
+			parts = append(parts, string(value))
+		}
+	}
+	return strings.Join(parts, "\x1f")
+}
+
+func updateAgg(state *aggState, spec aggSpec, ctx rowContext) {
+	switch spec.Func {
+	case "count":
+		if spec.Arg.Kind == aggArgStar {
+			state.Count++
+			return
+		}
+		if _, ok := aggValueFromColumn(ctx, spec.Arg.Column); ok {
+			state.Count++
+		}
+	case "sum":
+		if value, ok := aggValueFromColumn(ctx, spec.Arg.Column); ok && value.Kind == "number" {
+			state.Sum += value.Num
+			state.HasSum = true
+		}
+	case "avg":
+		if value, ok := aggValueFromColumn(ctx, spec.Arg.Column); ok && value.Kind == "number" {
+			state.Sum += value.Num
+			state.Count++
+		}
+	case "min":
+		if value, ok := aggValueFromColumn(ctx, spec.Arg.Column); ok {
+			updateAggMin(state, value)
+		}
+	case "max":
+		if value, ok := aggValueFromColumn(ctx, spec.Arg.Column); ok {
+			updateAggMax(state, value)
+		}
+	}
+}
+
+type aggValue struct {
+	Kind string
+	Num  float64
+	TS   int64
+	Str  string
+}
+
+func aggValueFromColumn(ctx rowContext, col resolvedColumn) (aggValue, bool) {
+	record, seg, ok := selectRecord(ctx, col.Source)
+	if !ok {
+		return aggValue{}, false
+	}
+	switch col.Kind {
+	case columnImplicit:
+		switch col.Column {
 		case "_partition":
-			fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 23, DataTypeSize: 4, TypeModifier: -1, Format: 0})
+			return aggValue{Kind: "number", Num: float64(record.Partition)}, true
 		case "_offset":
-			fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 20, DataTypeSize: 8, TypeModifier: -1, Format: 0})
+			return aggValue{Kind: "number", Num: float64(record.Offset)}, true
 		case "_ts":
-			fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 1114, DataTypeSize: 8, TypeModifier: -1, Format: 0})
-		case "_key", "_value":
-			fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 17, DataTypeSize: -1, TypeModifier: -1, Format: 0})
-		case "_right_partition":
-			fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 23, DataTypeSize: 4, TypeModifier: -1, Format: 0})
-		case "_right_offset":
-			fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 20, DataTypeSize: 8, TypeModifier: -1, Format: 0})
-		case "_right_ts":
-			fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 1114, DataTypeSize: 8, TypeModifier: -1, Format: 0})
-		case "_right_key", "_right_value":
-			fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 17, DataTypeSize: -1, TypeModifier: -1, Format: 0})
-		default:
-			if schema, ok := schemaCols[col]; ok {
-				oid := schemaTypeOID(schema.Type)
-				fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: oid, DataTypeSize: -1, TypeModifier: -1, Format: 0})
-			} else {
-				fields = append(fields, pgproto3.FieldDescription{Name: []byte(col), DataTypeOID: 25, DataTypeSize: -1, TypeModifier: -1, Format: 0})
-			}
-		}
-	}
-	return fields
-}
-
-func buildRowValues(cols []string, record decoder.Record, segmentKey string, schemaCols map[string]config.SchemaColumn) [][]byte {
-	values := make([][]byte, 0, len(cols))
-	for _, col := range cols {
-		switch col {
+			return aggValue{Kind: "timestamp", TS: record.Timestamp}, true
 		case "_topic":
-			values = append(values, []byte(record.Topic))
-		case "_partition":
-			values = append(values, []byte(itoa(int(record.Partition))))
-		case "_offset":
-			values = append(values, []byte(itoa64(record.Offset)))
-		case "_ts":
-			values = append(values, []byte(formatTimestamp(record.Timestamp)))
-		case "_key":
-			values = append(values, encodeBytea(record.Key))
-		case "_value":
-			values = append(values, encodeBytea(record.Value))
-		case "_headers":
-			values = append(values, []byte(headersToJSON(record.Headers)))
+			return aggValue{Kind: "string", Str: record.Topic}, true
 		case "_segment":
-			values = append(values, []byte(segmentKey))
+			return aggValue{Kind: "string", Str: seg}, true
+		case "_key":
+			return aggValue{Kind: "string", Str: string(record.Key)}, true
+		case "_value":
+			return aggValue{Kind: "string", Str: string(record.Value)}, true
 		default:
-			if schema, ok := schemaCols[col]; ok {
-				values = append(values, schemaValue(record.Value, schema, record.Topic))
+			return aggValue{}, false
+		}
+	case columnSchema:
+		return aggValueFromSchema(record.Value, col.Schema, record.Topic)
+	case columnJSON:
+		return aggValueFromJSON(record.Value, col.JSONPath)
+	default:
+		return aggValue{}, false
+	}
+}
+
+func aggValueFromSchema(payload []byte, schema config.SchemaColumn, topic string) (aggValue, bool) {
+	value, ok := jsonLookup(payload, schema.Path, topic)
+	if !ok {
+		return aggValue{}, false
+	}
+	switch strings.ToLower(schema.Type) {
+	case "int", "long", "double":
+		return numericValue(value)
+	case "timestamp":
+		if ts, ok := parseTimestampValue(value); ok {
+			return aggValue{Kind: "timestamp", TS: ts}, true
+		}
+		return aggValue{}, false
+	case "boolean":
+		if b, ok := value.(bool); ok {
+			return aggValue{Kind: "string", Str: strconv.FormatBool(b)}, true
+		}
+		return aggValue{}, false
+	default:
+		if s, ok := value.(string); ok {
+			return aggValue{Kind: "string", Str: s}, true
+		}
+		return aggValue{Kind: "string", Str: fmt.Sprintf("%v", value)}, true
+	}
+}
+
+func aggValueFromJSON(payload []byte, path string) (aggValue, bool) {
+	value, ok := jsonLookup(payload, path, "")
+	if !ok {
+		return aggValue{}, false
+	}
+	if num, ok := numericValue(value); ok {
+		return num, true
+	}
+	if s, ok := value.(string); ok {
+		return aggValue{Kind: "string", Str: s}, true
+	}
+	return aggValue{Kind: "string", Str: fmt.Sprintf("%v", value)}, true
+}
+
+func numericValue(value interface{}) (aggValue, bool) {
+	switch v := value.(type) {
+	case float64:
+		return aggValue{Kind: "number", Num: v}, true
+	case int64:
+		return aggValue{Kind: "number", Num: float64(v)}, true
+	case int:
+		return aggValue{Kind: "number", Num: float64(v)}, true
+	case string:
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			return aggValue{Kind: "number", Num: parsed}, true
+		}
+	}
+	return aggValue{}, false
+}
+
+func parseTimestampValue(value interface{}) (int64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int64(v), true
+	case int64:
+		return v, true
+	case string:
+		layouts := []string{
+			"2006-01-02 15:04:05.000",
+			"2006-01-02 15:04:05",
+			time.RFC3339,
+		}
+		for _, layout := range layouts {
+			if ts, err := time.Parse(layout, v); err == nil {
+				return ts.UnixMilli(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+func updateAggMin(state *aggState, value aggValue) {
+	if state.Kind == "" {
+		state.Kind = value.Kind
+	}
+	if state.Kind != value.Kind {
+		return
+	}
+	switch value.Kind {
+	case "timestamp":
+		if !state.MinSet || value.TS < state.MinTS {
+			state.MinTS = value.TS
+			state.MinSet = true
+		}
+	case "number":
+		if !state.MinSet || value.Num < state.MinNum {
+			state.MinNum = value.Num
+			state.MinSet = true
+		}
+	case "string":
+		if !state.MinSet || value.Str < state.MinStr {
+			state.MinStr = value.Str
+			state.MinSet = true
+		}
+	}
+}
+
+func updateAggMax(state *aggState, value aggValue) {
+	if state.Kind == "" {
+		state.Kind = value.Kind
+	}
+	if state.Kind != value.Kind {
+		return
+	}
+	switch value.Kind {
+	case "timestamp":
+		if !state.MaxSet || value.TS > state.MaxTS {
+			state.MaxTS = value.TS
+			state.MaxSet = true
+		}
+	case "number":
+		if !state.MaxSet || value.Num > state.MaxNum {
+			state.MaxNum = value.Num
+			state.MaxSet = true
+		}
+	case "string":
+		if !state.MaxSet || value.Str > state.MaxStr {
+			state.MaxStr = value.Str
+			state.MaxSet = true
+		}
+	}
+}
+
+func buildAggregateRow(plan aggregatePlan, state *groupState) [][]byte {
+	values := make([][]byte, 0, len(plan.outputs))
+	for _, out := range plan.outputs {
+		switch out.Kind {
+		case outputGroup:
+			if out.GroupIdx < len(state.Values) {
+				values = append(values, state.Values[out.GroupIdx])
 			} else {
 				values = append(values, nil)
 			}
+		case outputAggregate:
+			values = append(values, aggStateValue(state.Aggs[out.AggIdx], plan.aggs[out.AggIdx]))
 		}
 	}
 	return values
+}
+
+func aggStateValue(state aggState, spec aggSpec) []byte {
+	switch spec.Func {
+	case "count":
+		return []byte(strconv.FormatInt(state.Count, 10))
+	case "sum":
+		if !state.HasSum {
+			return nil
+		}
+		return []byte(strconv.FormatFloat(state.Sum, 'f', -1, 64))
+	case "avg":
+		if state.Count == 0 {
+			return nil
+		}
+		return []byte(strconv.FormatFloat(state.Sum/float64(state.Count), 'f', -1, 64))
+	case "min":
+		return aggMinMaxValue(state, true)
+	case "max":
+		return aggMinMaxValue(state, false)
+	default:
+		return nil
+	}
+}
+
+func aggMinMaxValue(state aggState, min bool) []byte {
+	if !state.MinSet && !state.MaxSet {
+		return nil
+	}
+	switch state.Kind {
+	case "timestamp":
+		if min {
+			return []byte(formatTimestamp(state.MinTS))
+		}
+		return []byte(formatTimestamp(state.MaxTS))
+	case "number":
+		if min {
+			return []byte(strconv.FormatFloat(state.MinNum, 'f', -1, 64))
+		}
+		return []byte(strconv.FormatFloat(state.MaxNum, 'f', -1, 64))
+	case "string":
+		if min {
+			return []byte(state.MinStr)
+		}
+		return []byte(state.MaxStr)
+	default:
+		return nil
+	}
 }
 
 func (s *Server) handleJoinSelect(ctx context.Context, backend *pgproto3.Backend, parsed kafsql.Query) (queryResult, error) {
@@ -829,6 +1602,9 @@ func (s *Server) handleJoinSelect(ctx context.Context, backend *pgproto3.Backend
 	}
 	if parsed.Partition != nil || parsed.OffsetMin != nil || parsed.OffsetMax != nil {
 		return queryResult{}, errors.New("join does not support partition or offset filters")
+	}
+	if hasAggregates(parsed.Select) {
+		return queryResult{}, errors.New("join does not support aggregates")
 	}
 
 	within, err := parseDuration(parsed.TimeWindow)
@@ -853,12 +1629,20 @@ func (s *Server) handleJoinSelect(ctx context.Context, backend *pgproto3.Backend
 		limit = s.cfg.Query.DefaultLimit
 	}
 
-	if len(parsed.Columns) > 1 || (len(parsed.Columns) == 1 && parsed.Columns[0] != "*") {
-		return queryResult{}, errors.New("join only supports select * in v0.6")
+	joinOn := parsed.JoinOn
+	if joinOn == nil {
+		joinOn = &kafsql.JoinCondition{
+			Left:  kafsql.JoinExpr{Kind: kafsql.JoinExprKey, Side: "left"},
+			Right: kafsql.JoinExpr{Kind: kafsql.JoinExprKey, Side: "right"},
+		}
 	}
+	joinOn = normalizeJoinCondition(joinOn)
 
-	cols := joinDefaultColumns()
-	fields := buildRowDescription(cols, nil)
+	cols, err := s.resolveJoinColumns(parsed)
+	if err != nil {
+		return queryResult{}, err
+	}
+	fields := buildRowDescription(cols)
 	if err := backend.Send(&pgproto3.RowDescription{Fields: fields}); err != nil {
 		return queryResult{}, err
 	}
@@ -886,7 +1670,7 @@ func (s *Server) handleJoinSelect(ctx context.Context, backend *pgproto3.Backend
 		return queryResult{}, err
 	}
 
-	rightByKey := groupByKey(rightRecords)
+	rightByKey := groupByJoinKey(rightRecords, joinOn.Right)
 	sent := 0
 	segmentsScanned := segmentsByTopic(segments, parsed.Topic) + segmentsByTopic(segments, parsed.JoinTopic)
 	bytesScanned := leftBytes + rightBytes
@@ -894,10 +1678,10 @@ func (s *Server) handleJoinSelect(ctx context.Context, backend *pgproto3.Backend
 		if left.Record.Timestamp < windowStart.UnixMilli() {
 			continue
 		}
-		key := recordKey(left.Record.Key)
+		key := joinKeyFromExpr(left.Record, joinOn.Left)
 		if key == "" {
 			if parsed.JoinType == "left" {
-				values := buildJoinRow(cols, left, joinRecord{})
+				values := buildRowValues(cols, rowContext{left: left.Record, leftSeg: left.SegmentKey})
 				if err := backend.Send(&pgproto3.DataRow{Values: values}); err != nil {
 					return queryResult{}, err
 				}
@@ -916,7 +1700,12 @@ func (s *Server) handleJoinSelect(ctx context.Context, backend *pgproto3.Backend
 			if !withinWindow(left.Record.Timestamp, right.Record.Timestamp, within) {
 				continue
 			}
-			values := buildJoinRow(cols, left, right)
+			values := buildRowValues(cols, rowContext{
+				left:     left.Record,
+				right:    &right.Record,
+				leftSeg:  left.SegmentKey,
+				rightSeg: right.SegmentKey,
+			})
 			if err := backend.Send(&pgproto3.DataRow{Values: values}); err != nil {
 				return queryResult{}, err
 			}
@@ -929,7 +1718,7 @@ func (s *Server) handleJoinSelect(ctx context.Context, backend *pgproto3.Backend
 		}
 
 		if !matched && parsed.JoinType == "left" {
-			values := buildJoinRow(cols, left, joinRecord{})
+			values := buildRowValues(cols, rowContext{left: left.Record, leftSeg: left.SegmentKey})
 			if err := backend.Send(&pgproto3.DataRow{Values: values}); err != nil {
 				return queryResult{}, err
 			}
@@ -969,10 +1758,104 @@ func (s *Server) loadRecords(ctx context.Context, dec decoder.Decoder, segments 
 	return out, bytesScanned, nil
 }
 
-func groupByKey(records []joinRecord) map[string][]joinRecord {
+func (s *Server) resolveJoinColumns(parsed kafsql.Query) ([]resolvedColumn, error) {
+	if len(parsed.Select) == 0 {
+		return joinDefaultColumns(), nil
+	}
+	if len(parsed.Select) == 1 && parsed.Select[0].Kind == kafsql.SelectColumnStar {
+		return joinDefaultColumns(), nil
+	}
+
+	leftSchema := s.schemaColumnMapForTopic(parsed.Topic)
+	rightSchema := s.schemaColumnMapForTopic(parsed.JoinTopic)
+	out := make([]resolvedColumn, 0, len(parsed.Select))
+	for _, sel := range parsed.Select {
+		if sel.Kind == kafsql.SelectColumnStar {
+			return nil, errors.New("select * cannot be combined with other columns in join")
+		}
+		if sel.Kind == kafsql.SelectColumnAggregate {
+			return nil, errors.New("join does not support aggregates")
+		}
+		side := joinSideFromSource(parsed, sel.Source)
+		schemaMap := leftSchema
+		topic := parsed.Topic
+		if side == "right" {
+			schemaMap = rightSchema
+			topic = parsed.JoinTopic
+		}
+		switch sel.Kind {
+		case kafsql.SelectColumnField:
+			col, err := s.resolveColumnByName(topic, sel.Column, schemaMap)
+			if err != nil {
+				return nil, err
+			}
+			col.Source = side
+			if sel.Alias != "" {
+				col.Name = sel.Alias
+			} else {
+				col.Name = joinOutputName(side, col.Name, col.Kind)
+			}
+			out = append(out, col)
+		case kafsql.SelectColumnJSONValue:
+			name := sel.Alias
+			if name == "" {
+				name = joinOutputName(side, "json_value", columnJSON)
+			}
+			out = append(out, resolvedColumn{
+				Name:     name,
+				Kind:     columnJSON,
+				JSONPath: sel.JSONPath,
+				Source:   side,
+			})
+		default:
+			return nil, errors.New("unsupported join select column")
+		}
+	}
+	return out, nil
+}
+
+func joinSideFromSource(parsed kafsql.Query, source string) string {
+	if source == "" || source == parsed.TopicAlias || source == parsed.Topic {
+		return "left"
+	}
+	if source == parsed.JoinAlias || source == parsed.JoinTopic {
+		return "right"
+	}
+	return "left"
+}
+
+func joinOutputName(side string, name string, kind columnKind) string {
+	if side != "right" {
+		return name
+	}
+	if kind == columnJSON {
+		return "_right_json_value"
+	}
+	if strings.HasPrefix(name, "_") {
+		return "_right" + name
+	}
+	return "_right_" + name
+}
+
+func normalizeJoinCondition(cond *kafsql.JoinCondition) *kafsql.JoinCondition {
+	left := cond.Left
+	right := cond.Right
+	if left.Side == "" {
+		left.Side = "left"
+	}
+	if right.Side == "" {
+		right.Side = "right"
+	}
+	if left.Side == "right" && right.Side == "left" {
+		left, right = right, left
+	}
+	return &kafsql.JoinCondition{Left: left, Right: right}
+}
+
+func groupByJoinKey(records []joinRecord, expr kafsql.JoinExpr) map[string][]joinRecord {
 	out := make(map[string][]joinRecord)
 	for _, record := range records {
-		key := recordKey(record.Record.Key)
+		key := joinKeyFromExpr(record.Record, expr)
 		if key == "" {
 			continue
 		}
@@ -991,11 +1874,20 @@ func segmentsByTopic(segments []discovery.SegmentRef, topic string) int {
 	return count
 }
 
-func recordKey(key []byte) string {
-	if len(key) == 0 {
-		return ""
+func joinKeyFromExpr(record decoder.Record, expr kafsql.JoinExpr) string {
+	switch expr.Kind {
+	case kafsql.JoinExprJSON:
+		value, ok := jsonLookup(record.Value, expr.JSONPath, "")
+		if !ok {
+			return ""
+		}
+		return fmt.Sprintf("%v", value)
+	default:
+		if len(record.Key) == 0 {
+			return ""
+		}
+		return string(record.Key)
 	}
-	return string(key)
 }
 
 func withinWindow(left, right int64, window time.Duration) bool {
@@ -1006,87 +1898,25 @@ func withinWindow(left, right int64, window time.Duration) bool {
 	return time.Duration(diff)*time.Millisecond <= window
 }
 
-func joinDefaultColumns() []string {
-	return []string{
-		"_topic", "_partition", "_offset", "_ts", "_key", "_value", "_headers", "_segment",
-		"_right_topic", "_right_partition", "_right_offset", "_right_ts", "_right_key", "_right_value", "_right_headers", "_right_segment",
+func joinDefaultColumns() []resolvedColumn {
+	return []resolvedColumn{
+		{Name: "_topic", Kind: columnImplicit, Column: "_topic", Source: "left"},
+		{Name: "_partition", Kind: columnImplicit, Column: "_partition", Source: "left"},
+		{Name: "_offset", Kind: columnImplicit, Column: "_offset", Source: "left"},
+		{Name: "_ts", Kind: columnImplicit, Column: "_ts", Source: "left"},
+		{Name: "_key", Kind: columnImplicit, Column: "_key", Source: "left"},
+		{Name: "_value", Kind: columnImplicit, Column: "_value", Source: "left"},
+		{Name: "_headers", Kind: columnImplicit, Column: "_headers", Source: "left"},
+		{Name: "_segment", Kind: columnImplicit, Column: "_segment", Source: "left"},
+		{Name: "_right_topic", Kind: columnImplicit, Column: "_topic", Source: "right"},
+		{Name: "_right_partition", Kind: columnImplicit, Column: "_partition", Source: "right"},
+		{Name: "_right_offset", Kind: columnImplicit, Column: "_offset", Source: "right"},
+		{Name: "_right_ts", Kind: columnImplicit, Column: "_ts", Source: "right"},
+		{Name: "_right_key", Kind: columnImplicit, Column: "_key", Source: "right"},
+		{Name: "_right_value", Kind: columnImplicit, Column: "_value", Source: "right"},
+		{Name: "_right_headers", Kind: columnImplicit, Column: "_headers", Source: "right"},
+		{Name: "_right_segment", Kind: columnImplicit, Column: "_segment", Source: "right"},
 	}
-}
-
-func buildJoinRow(cols []string, left joinRecord, right joinRecord) [][]byte {
-	rightMissing := right.Record.Topic == ""
-	values := make([][]byte, 0, len(cols))
-	for _, col := range cols {
-		switch col {
-		case "_topic":
-			values = append(values, []byte(left.Record.Topic))
-		case "_partition":
-			values = append(values, []byte(itoa(int(left.Record.Partition))))
-		case "_offset":
-			values = append(values, []byte(itoa64(left.Record.Offset)))
-		case "_ts":
-			values = append(values, []byte(formatTimestamp(left.Record.Timestamp)))
-		case "_key":
-			values = append(values, encodeBytea(left.Record.Key))
-		case "_value":
-			values = append(values, encodeBytea(left.Record.Value))
-		case "_headers":
-			values = append(values, []byte(headersToJSON(left.Record.Headers)))
-		case "_segment":
-			values = append(values, []byte(left.SegmentKey))
-		case "_right_topic":
-			if rightMissing {
-				values = append(values, nil)
-			} else {
-				values = append(values, []byte(right.Record.Topic))
-			}
-		case "_right_partition":
-			if rightMissing {
-				values = append(values, nil)
-			} else {
-				values = append(values, []byte(itoa(int(right.Record.Partition))))
-			}
-		case "_right_offset":
-			if rightMissing {
-				values = append(values, nil)
-			} else {
-				values = append(values, []byte(itoa64(right.Record.Offset)))
-			}
-		case "_right_ts":
-			if rightMissing || right.Record.Timestamp == 0 {
-				values = append(values, nil)
-			} else {
-				values = append(values, []byte(formatTimestamp(right.Record.Timestamp)))
-			}
-		case "_right_key":
-			if rightMissing {
-				values = append(values, nil)
-			} else {
-				values = append(values, encodeBytea(right.Record.Key))
-			}
-		case "_right_value":
-			if rightMissing {
-				values = append(values, nil)
-			} else {
-				values = append(values, encodeBytea(right.Record.Value))
-			}
-		case "_right_headers":
-			if rightMissing {
-				values = append(values, nil)
-			} else {
-				values = append(values, []byte(headersToJSON(right.Record.Headers)))
-			}
-		case "_right_segment":
-			if rightMissing {
-				values = append(values, nil)
-			} else {
-				values = append(values, []byte(right.SegmentKey))
-			}
-		default:
-			values = append(values, nil)
-		}
-	}
-	return values
 }
 
 func (s *Server) schemaColumnMapForTopic(topic string) map[string]config.SchemaColumn {

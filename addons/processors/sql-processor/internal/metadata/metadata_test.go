@@ -25,7 +25,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/config"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/config"
 )
 
 func TestSnapshotResolverCache(t *testing.T) {
@@ -102,6 +102,29 @@ func TestEtcdResolverSnapshot(t *testing.T) {
 	}
 	if len(topics) != 1 || topics[0] != "orders" {
 		t.Fatalf("unexpected topics: %v", topics)
+	}
+}
+
+func TestSnapshotToMaps(t *testing.T) {
+	snap := Snapshot{
+		Topics: []Topic{
+			{Name: "orders", Partitions: []int32{0, 1}},
+			{Name: "payments", Partitions: []int32{2}},
+		},
+	}
+	topics, partitions := snapshotToMaps(snap)
+	if len(topics) != 2 {
+		t.Fatalf("expected 2 topics, got %d", len(topics))
+	}
+	if len(partitions["orders"]) != 2 || len(partitions["payments"]) != 1 {
+		t.Fatalf("unexpected partitions: %+v", partitions)
+	}
+}
+
+func TestNewResolverConfigErrors(t *testing.T) {
+	cfg := config.Config{Metadata: config.MetaConfig{Discovery: "etcd"}}
+	if _, err := NewResolver(cfg); err == nil {
+		t.Fatalf("expected error for missing etcd endpoints")
 	}
 }
 

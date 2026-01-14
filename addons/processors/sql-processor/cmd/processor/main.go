@@ -23,9 +23,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/config"
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/metrics"
-	"github.com/novatechflow/kafscale/addons/processors/sql-processor/internal/server"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/config"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/metrics"
+	"github.com/kafscale/platform/addons/processors/sql-processor/internal/server"
 )
 
 func main() {
