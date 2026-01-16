@@ -22,14 +22,21 @@ S3 and exposes a Postgres wire protocol endpoint for ad-hoc queries. It is
 stateless, uses S3 as source of truth, and targets the 80% of Kafka data
 questions that are simple and time-bounded.
 
-## What It Will Do
+## Quick Links
+
+- User guide: `addons/processors/sql-processor/user-guide.md`
+- Developer guide: `addons/processors/sql-processor/developer.md`
+- Reference config: `addons/processors/sql-processor/config/config.yaml`
+- Helm values: `addons/processors/sql-processor/deploy/helm/sql-processor/values.yaml`
+
+## What It Does
 
 - Read KFS segments directly from S3 (no broker dependency).
 - Expose Postgres wire protocol for JDBC/BI compatibility.
 - Support single-topic queries plus bounded two-topic joins.
 - Provide Kafka-native SQL extensions (`LAST`, `TAIL`, `SCAN FULL`).
 
-## What It Will Not Do
+## What It Does Not Do
 
 - Continuous streaming queries or materialized views.
 - Full SQL feature parity or multi-join chains.
@@ -71,3 +78,5 @@ metadata:
 server:
   listen: ":5432"
 ```
+
+For full configuration and operational guidance, use the user guide.
