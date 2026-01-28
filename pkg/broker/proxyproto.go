@@ -34,6 +34,7 @@ type ProxyInfo struct {
 	DestIP     string
 	SourcePort int
 	DestPort   int
+	Local      bool
 }
 
 // ReadProxyProtocol consumes a PROXY protocol header (v1 or v2) if present.
@@ -68,7 +69,7 @@ func parseProxyHeader(br *bufio.Reader) (*ProxyInfo, error) {
 }
 
 func parseProxyV1(br *bufio.Reader) (*ProxyInfo, error) {
-	line, err := br.ReadString('\n')
+	line, err := readProxyV1Line(br, 256)
 	if err != nil {
 		return nil, err
 	}
@@ -98,10 +99,14 @@ func parseProxyV2(br *bufio.Reader) (*ProxyInfo, error) {
 	if !bytes.Equal(header[:12], proxyV2Signature) {
 		return nil, fmt.Errorf("proxy v2 signature mismatch")
 	}
+	cmd := header[12] & 0x0f
 	length := int(binary.BigEndian.Uint16(header[14:16]))
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(br, payload); err != nil {
 		return nil, err
+	}
+	if cmd == 0x0 {
+		return &ProxyInfo{Local: true}, nil
 	}
 	family := header[13] & 0x0f
 	switch family {
@@ -176,4 +181,22 @@ func atoiOrZero(value string) int {
 		out = out*10 + int(ch-'0')
 	}
 	return out
+}
+
+func readProxyV1Line(br *bufio.Reader, maxLen int) (string, error) {
+	if maxLen <= 0 {
+		maxLen = 256
+	}
+	buf := make([]byte, 0, maxLen)
+	for len(buf) < maxLen {
+		b, err := br.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		buf = append(buf, b)
+		if b == '\n' {
+			return string(buf), nil
+		}
+	}
+	return "", fmt.Errorf("proxy v1 header too long")
 }

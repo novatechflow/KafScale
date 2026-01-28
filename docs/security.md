@@ -101,7 +101,8 @@ Until SASL is implemented, this is the default identity Kafscale uses for ACL
 checks. You can also derive principals from network identity when the proxy
 protocol is enabled (see Operations docs for `KAFSCALE_PRINCIPAL_SOURCE`). Only
 enable proxy-derived identity when brokers are reachable solely through a
-trusted proxy/LB.
+trusted proxy/LB. PROXY v1 headers are capped at 256 bytes; oversized headers
+are rejected.
 
 ## Known Gaps
 

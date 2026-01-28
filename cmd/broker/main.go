@@ -647,6 +647,9 @@ func (h *handler) logAuthzDenied(principal string, action acl.Action, resource a
 	key := fmt.Sprintf("%s|%s|%s|%s", action, resource, principal, name)
 	now := time.Now()
 	h.authLogMu.Lock()
+	if len(h.authLogLast) > 10000 {
+		h.authLogLast = make(map[string]time.Time)
+	}
 	last := h.authLogLast[key]
 	if now.Sub(last) < time.Minute {
 		h.authLogMu.Unlock()
@@ -2199,13 +2202,18 @@ func buildConnContextFunc(logger *slog.Logger) broker.ConnContextFunc {
 			if parsed == nil {
 				return conn, nil, fmt.Errorf("proxy protocol required but header missing")
 			}
+			if parsed.Local {
+				logger.Warn("proxy protocol local command received; using socket remote addr")
+			}
 			if wrapped != nil {
 				conn = wrapped
 			}
 			proxyInfo = parsed
 			if proxyInfo != nil {
-				info.ProxyAddr = proxyInfo.SourceAddr
-				info.RemoteAddr = proxyInfo.SourceAddr
+				if !proxyInfo.Local && proxyInfo.SourceAddr != "" {
+					info.ProxyAddr = proxyInfo.SourceAddr
+					info.RemoteAddr = proxyInfo.SourceAddr
+				}
 			}
 		}
 		if info.RemoteAddr == "" {

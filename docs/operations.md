@@ -76,6 +76,9 @@ helm upgrade --install kafscale deploy/helm/kafscale \
   - **Principal source** – Set `KAFSCALE_PRINCIPAL_SOURCE` to `client_id` (default), `remote_addr`, or `proxy_addr`. Use `proxy_addr` with `KAFSCALE_PROXY_PROTOCOL=true` to derive principals from a trusted TCP proxy (PROXY protocol v1/v2).
   - **Auth denials** – Broker logs emit a rate-limited `authorization denied` entry with principal/action/resource context.
   - **Trust boundary** – Only enable `proxy_addr`/PROXY protocol when brokers are reachable *only* through a trusted LB or sidecar that injects the header. Do not expose brokers directly, or clients can spoof identity.
+  - **Fail-closed** – When `KAFSCALE_PROXY_PROTOCOL=true`, brokers reject connections that do not include a valid PROXY header.
+  - **Header limits** – PROXY v1 headers are capped at 256 bytes; oversized headers are rejected.
+  - **Health checks** – PROXY v2 `LOCAL` connections are accepted (no identity); ensure LB health checks don’t rely on ACL-protected operations.
 
 Example ACL values (Helm operator):
 ```yaml
