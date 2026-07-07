@@ -190,6 +190,11 @@ If no etcd endpoints are supplied, the operator will provision a 3-node etcd Sta
 - Enable snapshot backups to a dedicated S3 bucket and retain at least 7 days of snapshots.
 - Monitor leader changes, fsync latency, and disk usage; alert on slow or flapping members.
 
+The operator tunes managed etcd automatically: periodic compaction (5m retention),
+a 4 GiB backend quota, and a defrag CronJob (every 6h) that reclaims physical
+space and disarms `NOSPACE` alarms. Override via `KAFSCALE_OPERATOR_ETCD_*` env vars
+on the operator Deployment.
+
 ### Etcd Endpoint Resolution
 
 The operator resolves etcd endpoints in this order:
@@ -283,6 +288,11 @@ Recommended operator alerting (when using Prometheus Operator):
 - `KAFSCALE_OPERATOR_ETCD_STORAGE_SIZE` – PVC size for managed etcd (default `10Gi`).
 - `KAFSCALE_OPERATOR_ETCD_STORAGE_CLASS` – StorageClass for managed etcd PVCs.
 - `KAFSCALE_OPERATOR_ETCD_STORAGE_MEMORY` – Use in-memory `emptyDir` for etcd data (`1` to enable, test/dev only).
+- `KAFSCALE_OPERATOR_ETCD_AUTO_COMPACTION_MODE` – Managed etcd compaction mode (`periodic` or `revision`; default `periodic`).
+- `KAFSCALE_OPERATOR_ETCD_AUTO_COMPACTION_RETENTION` – Compaction retention (`5m` for periodic mode; default `5m`).
+- `KAFSCALE_OPERATOR_ETCD_QUOTA_BACKEND_BYTES` – Managed etcd backend quota in bytes (default `4294967296`, 4 GiB).
+- `KAFSCALE_OPERATOR_ETCD_DEFRAG_SCHEDULE` – Cron schedule for per-member defrag + alarm disarm (default `0 */6 * * *`).
+- `KAFSCALE_OPERATOR_ETCD_DEFRAG_ENABLED` – Enable the defrag CronJob (`0`/`false` to disable; enabled by default).
 - `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_BUCKET` – Override snapshot bucket (default: `kafscale-etcd-<namespace>-<cluster>`).
 - `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_PREFIX` – Snapshot prefix (default `etcd-snapshots`).
 - `KAFSCALE_OPERATOR_ETCD_SNAPSHOT_SCHEDULE` – Cron schedule for snapshots (default `0 * * * *`).

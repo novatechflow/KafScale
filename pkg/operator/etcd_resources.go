@@ -53,6 +53,16 @@ const (
 	operatorEtcdSnapshotProtectBucketEnv = "KAFSCALE_OPERATOR_ETCD_SNAPSHOT_PROTECT_BUCKET"
 	operatorEtcdStorageMemoryEnv         = "KAFSCALE_OPERATOR_ETCD_STORAGE_MEMORY"
 
+	// etcd space-management knobs. KafScale writes one MVCC revision per
+	// offset update (one per produce), so the store grows fast under load.
+	// These three control periodic compaction and the backend quota; all
+	// have safe defaults and only need an override on high-write clusters.
+	operatorEtcdQuotaBackendBytesEnv       = "KAFSCALE_OPERATOR_ETCD_QUOTA_BACKEND_BYTES"
+	operatorEtcdAutoCompactionRetentionEnv = "KAFSCALE_OPERATOR_ETCD_AUTO_COMPACTION_RETENTION"
+	operatorEtcdAutoCompactionModeEnv      = "KAFSCALE_OPERATOR_ETCD_AUTO_COMPACTION_MODE"
+	operatorEtcdDefragScheduleEnv          = "KAFSCALE_OPERATOR_ETCD_DEFRAG_SCHEDULE"
+	operatorEtcdDefragEnabledEnv           = "KAFSCALE_OPERATOR_ETCD_DEFRAG_ENABLED"
+
 	defaultEtcdImage                 = "kubesphere/etcd:3.6.4-0"
 	defaultEtcdctlImage              = "ghcr.io/kafscale/kafscale-etcd-tools:dev"
 	defaultEtcdStorageSize           = "10Gi"
@@ -62,6 +72,19 @@ const (
 	defaultSnapshotSchedule          = "0 * * * *"
 	defaultSnapshotImage             = "amazon/aws-cli:2.15.0"
 	defaultSnapshotStaleAfterSeconds = 2 * 60 * 60
+
+	// 4 GiB backend quota: headroom above etcd's 2 GiB default so a write
+	// burst cannot exceed the quota between compaction cycles.
+	defaultEtcdQuotaBackendBytes = int64(4 * 1024 * 1024 * 1024)
+	// 5 minutes of retained revisions keeps recovery/audit history while the
+	// compactor keeps pace with the broker write rate.
+	defaultEtcdAutoCompactionRetention = "5m"
+	// "periodic" compacts on a wall-clock interval (the retention value);
+	// "revision" is the only other valid mode.
+	defaultEtcdAutoCompactionMode = "periodic"
+	// Defrag reclaims physical bbolt pages that compaction frees logically.
+	// Run every 6 hours by default; one member at a time to preserve quorum.
+	defaultEtcdDefragSchedule = "0 */6 * * *"
 )
 
 type EtcdResolution struct {
@@ -127,6 +150,9 @@ func reconcileEtcdResources(ctx context.Context, c client.Client, scheme *runtim
 		return err
 	}
 	if err := reconcileEtcdSnapshotCronJob(ctx, c, scheme, cluster); err != nil {
+		return err
+	}
+	if err := reconcileEtcdDefragCronJob(ctx, c, scheme, cluster); err != nil {
 		return err
 	}
 	return nil
@@ -367,25 +393,46 @@ func reconcileEtcdStatefulSet(ctx context.Context, c client.Client, scheme *runt
 				},
 			}
 		}
-		sts.Spec.Template.Spec.Containers = []corev1.Container{
-			{
-				Name:  "etcd",
-				Image: image,
-				Ports: []corev1.ContainerPort{
-					{Name: "client", ContainerPort: 2379},
-					{Name: "peer", ContainerPort: 2380},
-				},
-				Env: []corev1.EnvVar{
-					{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
-					{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
-				},
-				Command: []string{"etcd"},
-				Args:    etcdArgs(cluster),
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "data", MountPath: "/var/lib/etcd"},
-				},
+		etcdContainer := corev1.Container{
+			Name:  "etcd",
+			Image: image,
+			Ports: []corev1.ContainerPort{
+				{Name: "client", ContainerPort: 2379},
+				{Name: "peer", ContainerPort: 2380},
+			},
+			Env: []corev1.EnvVar{
+				{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+				{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
+			},
+			Command: []string{"etcd"},
+			Args:    etcdArgs(cluster),
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "data", MountPath: "/var/lib/etcd"},
 			},
 		}
+		// Memory-mode guard. With storage-memory mode the data dir is a tmpfs
+		// emptyDir, so every byte etcd writes (up to the backend quota) is
+		// resident node RAM. A tmpfs has no size cap of its own, so a 4 GiB
+		// quota could drive ~4 GiB of node memory and risk an OOM that takes
+		// the node down. The tmpfs allocation counts against this container's
+		// memory cgroup, so a memory limit bounds it: the kernel reclaims/kills
+		// inside the container before the node is starved. The limit is the
+		// quota plus headroom for etcd's own heap and bbolt mmap pages; the
+		// request matches the quota so the scheduler reserves real capacity.
+		// Disk-backed (PVC) mode is unchanged: bytes land on the volume, not RAM.
+		if useMemory {
+			quota := etcdQuotaBackendBytes()
+			memLimit := quota + (512 * 1024 * 1024)
+			etcdContainer.Resources = corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory: *resource.NewQuantity(quota, resource.BinarySI),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceMemory: *resource.NewQuantity(memLimit, resource.BinarySI),
+				},
+			}
+		}
+		sts.Spec.Template.Spec.Containers = []corev1.Container{etcdContainer}
 		return controllerutil.SetControllerReference(cluster, sts, scheme)
 	})
 	return err
@@ -406,6 +453,18 @@ func etcdArgs(cluster *kafscalev1alpha1.KafscaleCluster) []string {
 		"--initial-cluster=" + initialCluster,
 		"--initial-cluster-state=new",
 		"--initial-cluster-token=" + cluster.Name + "-etcd",
+		// Periodic auto-compaction. KafScale writes one etcd revision per
+		// offset update (one per produce), so without compaction the DB fills
+		// to the default 2 GiB quota under load and the broker starts rejecting
+		// produce with `mvcc: database space exceeded`. Compaction reclaims
+		// revisions logically (bbolt pages become reusable). Physical reclaim
+		// and NOSPACE alarm disarm run on a separate defrag CronJob.
+		// Mode + retention + quota are env-configurable for high-write clusters.
+		"--auto-compaction-mode=" + etcdAutoCompactionMode(),
+		"--auto-compaction-retention=" + etcdAutoCompactionRetention(),
+		// Headroom above the default 2 GiB so a burst cannot exceed the quota
+		// between compactions; raises the soft cap inside etcd.
+		"--quota-backend-bytes=" + strconv.FormatInt(etcdQuotaBackendBytes(), 10),
 	}
 }
 
@@ -603,6 +662,71 @@ func reconcileEtcdSnapshotCronJob(ctx context.Context, c client.Client, scheme *
 	return err
 }
 
+func reconcileEtcdDefragCronJob(ctx context.Context, c client.Client, scheme *runtime.Scheme, cluster *kafscalev1alpha1.KafscaleCluster) error {
+	if !etcdDefragEnabled() {
+		return nil
+	}
+	schedule := getEnv(operatorEtcdDefragScheduleEnv, defaultEtcdDefragSchedule)
+	etcdctlImage := getEnv(operatorEtcdSnapshotEtcdctlEnv, defaultEtcdctlImage)
+	memberEndpoints := strings.Join(managedEtcdMemberClientEndpoints(cluster), ",")
+
+	cron := &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{
+		Name:      fmt.Sprintf("%s-etcd-defrag", cluster.Name),
+		Namespace: cluster.Namespace,
+	}}
+
+	_, err := controllerutil.CreateOrUpdate(ctx, c, cron, func() error {
+		labels := etcdLabels(cluster)
+		cron.Labels = labels
+		cron.Spec.Schedule = schedule
+		cron.Spec.ConcurrencyPolicy = batchv1.ForbidConcurrent
+		cron.Spec.SuccessfulJobsHistoryLimit = int32Ptr(3)
+		cron.Spec.FailedJobsHistoryLimit = int32Ptr(3)
+		cron.Spec.JobTemplate.Spec.Template.Labels = labels
+		cron.Spec.JobTemplate.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+		cron.Spec.JobTemplate.Spec.Template.Spec.Containers = []corev1.Container{
+			{
+				Name:  "defrag",
+				Image: etcdctlImage,
+				Env: []corev1.EnvVar{
+					{Name: "ETCD_MEMBERS", Value: memberEndpoints},
+					{Name: "ETCDCTL_API", Value: "3"},
+				},
+				Command: []string{"/bin/sh", "-c"},
+				Args: []string{
+					"set -euo pipefail\n" +
+						"IFS=',' read -ra MEMBERS <<< \"${ETCD_MEMBERS}\"\n" +
+						"for ep in \"${MEMBERS[@]}\"; do\n" +
+						"  echo \"defrag ${ep}\"\n" +
+						"  etcdctl --endpoints=\"${ep}\" endpoint defrag\n" +
+						"  echo \"disarm alarms on ${ep}\"\n" +
+						"  etcdctl --endpoints=\"${ep}\" alarm disarm\n" +
+						"  sleep 2\n" +
+						"done\n",
+				},
+			},
+		}
+		return controllerutil.SetControllerReference(cluster, cron, scheme)
+	})
+	return err
+}
+
+func managedEtcdMemberClientEndpoints(cluster *kafscalev1alpha1.KafscaleCluster) []string {
+	peerSvc := fmt.Sprintf("%s-etcd", cluster.Name)
+	replicas := int(etcdReplicas())
+	if replicas < 1 {
+		replicas = 1
+	}
+	endpoints := make([]string, 0, replicas)
+	for i := 0; i < replicas; i++ {
+		endpoints = append(endpoints, fmt.Sprintf(
+			"http://%s-etcd-%d.%s.%s.svc.cluster.local:2379",
+			cluster.Name, i, peerSvc, cluster.Namespace,
+		))
+	}
+	return endpoints
+}
+
 func snapshotBucket(cluster *kafscalev1alpha1.KafscaleCluster) string {
 	bucket := strings.TrimSpace(os.Getenv(operatorEtcdSnapshotBucketEnv))
 	if bucket == "" {
@@ -721,4 +845,55 @@ func stringPtrOrNil(val string) *string {
 		return nil
 	}
 	return &val
+}
+
+// etcdQuotaBackendBytes returns the configured backend quota in bytes, or the
+// default. Empty or non-positive / unparseable values fall back to the default
+// so a garbage override never disables the quota.
+func etcdQuotaBackendBytes() int64 {
+	raw := strings.TrimSpace(os.Getenv(operatorEtcdQuotaBackendBytesEnv))
+	if raw == "" {
+		return defaultEtcdQuotaBackendBytes
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed <= 0 {
+		return defaultEtcdQuotaBackendBytes
+	}
+	return parsed
+}
+
+// etcdAutoCompactionRetention returns the configured retention window, or the
+// default. The value is passed verbatim to etcd, which interprets it per the
+// compaction mode (a duration like "5m" for periodic, a count for revision).
+func etcdAutoCompactionRetention() string {
+	raw := strings.TrimSpace(os.Getenv(operatorEtcdAutoCompactionRetentionEnv))
+	if raw == "" {
+		return defaultEtcdAutoCompactionRetention
+	}
+	return raw
+}
+
+// etcdAutoCompactionMode returns the configured compaction mode, restricted to
+// the two values etcd accepts ("periodic", "revision"); anything else falls
+// back to the default.
+func etcdAutoCompactionMode() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(operatorEtcdAutoCompactionModeEnv))) {
+	case "periodic":
+		return "periodic"
+	case "revision":
+		return "revision"
+	default:
+		return defaultEtcdAutoCompactionMode
+	}
+}
+
+// etcdDefragEnabled returns true unless explicitly disabled. Defrag reclaims
+// physical backend space and disarms NOSPACE alarms after quota pressure.
+func etcdDefragEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(operatorEtcdDefragEnabledEnv))) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
